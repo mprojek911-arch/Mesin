@@ -89,6 +89,7 @@ import com.autoremix.djslow.engine.VocalTrackState
 import com.autoremix.djslow.ui.components.ArrangementCard
 import com.autoremix.djslow.ui.components.MasteringCard
 import com.autoremix.djslow.ui.components.MusicEngineCard
+import com.autoremix.djslow.ui.components.RemixPlaybackMonitor
 import com.autoremix.djslow.viewmodel.MainViewModel
 import com.example.ui.theme.NeonAmber
 import com.example.ui.theme.NeonCyan
@@ -165,7 +166,10 @@ fun MainScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) {
                             Box(
                                 modifier = Modifier
                                     .size(36.dp)
@@ -190,13 +194,17 @@ fun MainScreen(
                                     text = "AUTO REMIX DJ SLOW",
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = TextPrimary
+                                    color = TextPrimary,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = "STUDIO PRODUKSI MUSIK & AUDIO NYATA",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = NeonCyan,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1021,177 +1029,21 @@ fun MainScreen(
             }
 
             // ==========================================
-            // PLAYBACK HASIL WAV NYATA
+            // MONITOR PLAYBACK HASIL REMIX FULL
             // ==========================================
+            if (uiState.isRenderedAvailable || uiState.isRendering) {
+                RemixPlaybackMonitor(
+                    uiState = uiState,
+                    onPlayRendered = { viewModel.onPlayRendered() },
+                    onPauseRendered = { viewModel.onPauseRendered() },
+                    onStopRendered = { viewModel.onStopRendered() },
+                    onSeekRendered = { frac -> viewModel.onSeekRendered(frac) },
+                    onSeekRelative = { deltaMs -> viewModel.onSeekRelative(deltaMs) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
             if (uiState.isRenderedAvailable) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("rendered_wav_card")
-                        .border(1.5.dp, Color(0xFF00E676).copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1B15)),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF00E676),
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    text = "BERKAS MASTER WAV SIAP & TERVALIDASI",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF00E676)
-                                )
-                                Text(
-                                    text = "Validasi Lulus: RIFF WAV 16-bit PCM • 44.1 kHz Stereo • Anti-Clipping Bebas Distorsi",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = TextSecondary
-                                )
-                            }
-                        }
-
-                        // Detail Berkas & Metrik Mastering Nyata
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFF05120D)
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(
-                                    text = "File: ${uiState.renderedWavFile?.name ?: "DJ_SLOW_MIX.wav"}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = TextPrimary
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "Durasi: ${formatTime(uiState.renderedDurationMs)}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
-                                    )
-                                    Text(
-                                        text = "Ukuran: ${(uiState.renderedWavFile?.length() ?: 0L) / 1024} KB",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
-                                    )
-                                    Text(
-                                        text = "True Peak: ${uiState.validationResult?.formattedTruePeak ?: "-0.80 dBTP"}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = NeonCyan
-                                    )
-                                    Text(
-                                        text = "LUFS: ${uiState.validationResult?.formattedLufs ?: "-14.0 LUFS"}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF00E676)
-                                    )
-                                }
-                            }
-                        }
-
-                        // Seek Slider Hasil
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = formatTime(uiState.renderedPositionMs),
-                                fontSize = 12.sp,
-                                color = Color(0xFF00E676)
-                            )
-                            Text(
-                                text = formatTime(uiState.renderedDurationMs),
-                                fontSize = 12.sp,
-                                color = TextMuted
-                            )
-                        }
-
-                        Slider(
-                            value = uiState.renderedProgressFraction,
-                            onValueChange = { frac -> viewModel.onSeekRendered(frac) },
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color(0xFF00E676),
-                                activeTrackColor = Color(0xFF00E676),
-                                inactiveTrackColor = Color(0xFF173024)
-                            ),
-                            modifier = Modifier.testTag("rendered_seek_slider")
-                        )
-
-                        // Tombol Playback Hasil
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = { viewModel.onPlayRendered() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("play_rendered_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF00E676),
-                                    contentColor = Color.Black
-                                )
-                            ) {
-                                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(text = "▶ PUTAR HASIL", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            Button(
-                                onClick = { viewModel.onPauseRendered() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("pause_rendered_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = StudioSurfaceElevated,
-                                    contentColor = TextPrimary
-                                )
-                            ) {
-                                Icon(imageVector = Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(text = "⏸ JEDA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            Button(
-                                onClick = { viewModel.onStopRendered() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .testTag("stop_rendered_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = StudioSurfaceElevated,
-                                    contentColor = Color(0xFFFF6B6B)
-                                )
-                            ) {
-                                Icon(imageVector = Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(text = "⏹ STOP", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-
                 // ==========================================
                 // TAHAP 6 FINAL: A/B PREVIEW & SECTION AUDITION
                 // ==========================================

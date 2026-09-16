@@ -27,7 +27,8 @@ object AudioDecoder {
     fun decode(context: Context, uri: Uri): Result<AudioSource> {
         val contentResolver = context.contentResolver
         LogChatManager.info(LogModule.AUDIO, "AUDIO_DECODE_START: Memulai pembacaan URI audio...", stage = "DECODE")
-        LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.SUCCESS, "URI SAF Diterima")
+        LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.WARNING, "Membaca URI...")
+        LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.PENDING)
 
         // 1. Ekstraksi nama file & ukuran
         var fileName: String? = null
@@ -49,6 +50,7 @@ object AudioDecoder {
         } catch (e: SecurityException) {
             val ex = IllegalStateException("File tidak tersedia (SecurityException)")
             LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: SecurityException akses file", ex, stage = "DECODE")
+            LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.FAILED, "SecurityException")
             LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "SecurityException")
             return Result.failure(ex)
         } catch (e: Exception) {
@@ -75,6 +77,7 @@ object AudioDecoder {
                 stage = "DECODE",
                 file = resolvedName
             )
+            LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.FAILED, "Unsupported format: $extension")
             LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Unsupported audio format")
             return Result.failure(ex)
         }
@@ -85,16 +88,19 @@ object AudioDecoder {
         } catch (e: FileNotFoundException) {
             val ex = FileNotFoundException("File tidak ditemukan: $resolvedName")
             LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: File tidak ditemukan", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.FAILED, "File not found")
             LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "File not found")
             return Result.failure(ex)
         } catch (e: SecurityException) {
             val ex = SecurityException("Izin akses file ditolak: $resolvedName")
             LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: Izin akses file ditolak", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.FAILED, "Permission denied")
             LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Permission denied")
             return Result.failure(ex)
         } catch (e: Exception) {
             val ex = IllegalStateException("File audio tidak dapat dibaca: ${e.message}")
             LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: File audio tidak dapat dibaca", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.FAILED, "Read error")
             LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, e.message ?: "Read error")
             return Result.failure(ex)
         }
@@ -102,9 +108,14 @@ object AudioDecoder {
         if (afd == null) {
             val ex = IllegalStateException("AssetFileDescriptor null untuk: $resolvedName")
             LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: File descriptor tidak tersedia", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.FAILED, "Null descriptor")
             LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Null file descriptor")
             return Result.failure(ex)
         }
+
+        // Input berhasil terverifikasi
+        LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.SUCCESS, resolvedName)
+        LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.WARNING, "Mengekstrak metadata...")
 
         if (fileSize <= 0L && afd.length > 0L) {
             fileSize = afd.length

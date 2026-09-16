@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -24,6 +26,7 @@ object LogChatManager {
     private const val LOG_FILE_NAME = "logchat_history.json"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val storageMutex = Mutex()
     private var appContext: Context? = null
     private var isInitialized = false
 
@@ -204,20 +207,25 @@ object LogChatManager {
 
     fun clearLogs() {
         _logs.value = emptyList()
+        _lastCrashReport.value = null
         appContext?.let { ctx ->
-            scope.launch {
-                try {
-                    val file = File(ctx.filesDir, "logchat/$LOG_FILE_NAME")
-                    if (file.exists()) file.delete()
-                    val crashFile = File(ctx.filesDir, "logchat/last_crash.txt")
-                    if (crashFile.exists()) crashFile.delete()
-                    _lastCrashReport.value = null
-                } catch (e: Exception) {
-                    Log.e(TAG, "Gagal menghapus log storage: ${e.message}")
-                }
-            }
+            clearLogsSync(ctx)
         }
-        info(LogModule.SYSTEM, "Seluruh catatan LogChat berhasil dibersihkan oleh pengguna.")
+    }
+
+    fun clearLogsSync(context: Context) {
+        _logs.value = emptyList()
+        _lastCrashReport.value = null
+        try {
+            val file = File(context.filesDir, "logchat/$LOG_FILE_NAME")
+            if (file.exists()) file.delete()
+            val tempFile = File(context.filesDir, "logchat/$LOG_FILE_NAME.tmp")
+            if (tempFile.exists()) tempFile.delete()
+            val crashFile = File(context.filesDir, "logchat/last_crash.txt")
+            if (crashFile.exists()) crashFile.delete()
+        } catch (e: Exception) {
+            Log.e(TAG, "Gagal menghapus log storage: ${e.message}")
+        }
     }
 
     fun exportLogsAsText(): String {
@@ -314,96 +322,129 @@ object LogChatManager {
 
     fun flushSync() {
         val ctx = appContext ?: return
-        try {
-            val logDir = File(ctx.filesDir, "logchat")
-            if (!logDir.exists()) logDir.mkdirs()
-            val file = File(logDir, LOG_FILE_NAME)
-            val jsonArray = JSONArray()
-            _logs.value.takeLast(MAX_LOGS).forEach { entry ->
-                val obj = JSONObject().apply {
-                    put("id", entry.id)
-                    put("timestamp", entry.timestamp)
-                    put("level", entry.level.name)
-                    put("module", entry.module.name)
-                    put("message", entry.message)
-                    put("detail", entry.detail ?: "")
-                    put("stackTrace", entry.stackTrace ?: "")
-                    put("pipelineStage", entry.pipelineStage ?: "")
-                    put("associatedFile", entry.associatedFile ?: "")
+        synchronized(this) {
+            try {
+                val logDir = File(ctx.filesDir, "logchat")
+                if (!logDir.exists()) logDir.mkdirs()
+                val file = File(logDir, LOG_FILE_NAME)
+                val tempFile = File(logDir, "$LOG_FILE_NAME.tmp")
+                val currentSnapshot = _logs.value
+                if (currentSnapshot.isEmpty()) {
+                    if (file.exists()) file.delete()
+                    if (tempFile.exists()) tempFile.delete()
+                    return
                 }
-                jsonArray.put(obj)
+
+                val jsonArray = JSONArray()
+                currentSnapshot.takeLast(MAX_LOGS).forEach { entry ->
+                    val obj = JSONObject().apply {
+                        put("id", entry.id)
+                        put("timestamp", entry.timestamp)
+                        put("level", entry.level.name)
+                        put("module", entry.module.name)
+                        put("message", entry.message)
+                        put("detail", entry.detail ?: "")
+                        put("stackTrace", entry.stackTrace ?: "")
+                        put("pipelineStage", entry.pipelineStage ?: "")
+                        put("associatedFile", entry.associatedFile ?: "")
+                    }
+                    jsonArray.put(obj)
+                }
+                tempFile.writeText(jsonArray.toString())
+                if (tempFile.exists()) {
+                    if (file.exists()) file.delete()
+                    tempFile.renameTo(file)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "flushSync gagal: ${e.message}")
             }
-            file.writeText(jsonArray.toString())
-        } catch (e: Exception) {
-            Log.e(TAG, "flushSync gagal: ${e.message}")
         }
     }
 
-    private fun saveLogsToDisk(context: Context) {
-        try {
-            val logDir = File(context.filesDir, "logchat")
-            if (!logDir.exists()) logDir.mkdirs()
-            val file = File(logDir, LOG_FILE_NAME)
-            val jsonArray = JSONArray()
-            _logs.value.takeLast(MAX_LOGS).forEach { entry ->
-                val obj = JSONObject().apply {
-                    put("id", entry.id)
-                    put("timestamp", entry.timestamp)
-                    put("level", entry.level.name)
-                    put("module", entry.module.name)
-                    put("message", entry.message)
-                    put("detail", entry.detail ?: "")
-                    put("stackTrace", entry.stackTrace ?: "")
-                    put("pipelineStage", entry.pipelineStage ?: "")
-                    put("associatedFile", entry.associatedFile ?: "")
+    private suspend fun saveLogsToDisk(context: Context) {
+        storageMutex.withLock {
+            try {
+                val logDir = File(context.filesDir, "logchat")
+                if (!logDir.exists()) logDir.mkdirs()
+                val file = File(logDir, LOG_FILE_NAME)
+                val tempFile = File(logDir, "$LOG_FILE_NAME.tmp")
+
+                val currentSnapshot = _logs.value
+                if (currentSnapshot.isEmpty()) {
+                    if (file.exists()) file.delete()
+                    if (tempFile.exists()) tempFile.delete()
+                    return@withLock
                 }
-                jsonArray.put(obj)
+
+                val jsonArray = JSONArray()
+                currentSnapshot.takeLast(MAX_LOGS).forEach { entry ->
+                    val obj = JSONObject().apply {
+                        put("id", entry.id)
+                        put("timestamp", entry.timestamp)
+                        put("level", entry.level.name)
+                        put("module", entry.module.name)
+                        put("message", entry.message)
+                        put("detail", entry.detail ?: "")
+                        put("stackTrace", entry.stackTrace ?: "")
+                        put("pipelineStage", entry.pipelineStage ?: "")
+                        put("associatedFile", entry.associatedFile ?: "")
+                    }
+                    jsonArray.put(obj)
+                }
+                tempFile.writeText(jsonArray.toString())
+                if (tempFile.exists()) {
+                    if (file.exists()) file.delete()
+                    tempFile.renameTo(file)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Gagal menyimpan log ke disk: ${e.message}")
             }
-            file.writeText(jsonArray.toString())
-        } catch (e: Exception) {
-            Log.e(TAG, "Gagal menyimpan log ke disk: ${e.message}")
         }
     }
 
-    private fun loadPersistedLogs(context: Context) {
-        try {
-            val file = File(context.filesDir, "logchat/$LOG_FILE_NAME")
-            if (!file.exists()) return
+    private suspend fun loadPersistedLogs(context: Context) {
+        storageMutex.withLock {
+            try {
+                val file = File(context.filesDir, "logchat/$LOG_FILE_NAME")
+                if (!file.exists()) return@withLock
 
-            val jsonString = file.readText()
-            if (jsonString.isBlank()) return
+                val jsonString = file.readText()
+                if (jsonString.isBlank()) return@withLock
 
-            val jsonArray = JSONArray(jsonString)
-            val loaded = ArrayList<LogEntry>()
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val levelStr = obj.optString("level", "INFO")
-                val moduleStr = obj.optString("module", "SYSTEM")
-                val level = try { LogLevel.valueOf(levelStr) } catch (e: Exception) { LogLevel.INFO }
-                val module = try { LogModule.valueOf(moduleStr) } catch (e: Exception) { LogModule.SYSTEM }
+                val jsonArray = JSONArray(jsonString)
+                val loaded = ArrayList<LogEntry>()
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val levelStr = obj.optString("level", "INFO")
+                    val moduleStr = obj.optString("module", "SYSTEM")
+                    val level = try { LogLevel.valueOf(levelStr) } catch (e: Exception) { LogLevel.INFO }
+                    val module = try { LogModule.valueOf(moduleStr) } catch (e: Exception) { LogModule.SYSTEM }
 
-                loaded.add(
-                    LogEntry(
-                        id = obj.optString("id"),
-                        timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                        level = level,
-                        module = module,
-                        message = obj.optString("message", ""),
-                        detail = obj.optString("detail").ifBlank { null },
-                        stackTrace = obj.optString("stackTrace").ifBlank { null },
-                        pipelineStage = obj.optString("pipelineStage").ifBlank { null },
-                        associatedFile = obj.optString("associatedFile").ifBlank { null }
+                    loaded.add(
+                        LogEntry(
+                            id = obj.optString("id"),
+                            timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
+                            level = level,
+                            module = module,
+                            message = obj.optString("message", ""),
+                            detail = obj.optString("detail").ifBlank { null },
+                            stackTrace = obj.optString("stackTrace").ifBlank { null },
+                            pipelineStage = obj.optString("pipelineStage").ifBlank { null },
+                            associatedFile = obj.optString("associatedFile").ifBlank { null }
+                        )
                     )
-                )
-            }
-            if (loaded.isNotEmpty()) {
-                _logs.update { existing ->
-                    val combined = loaded + existing
-                    if (combined.size > MAX_LOGS) combined.takeLast(MAX_LOGS) else combined
                 }
+                if (loaded.isNotEmpty()) {
+                    _logs.update { existing ->
+                        val existingIds = existing.map { it.id }.toSet()
+                        val toAdd = loaded.filterNot { it.id in existingIds }
+                        val combined = toAdd + existing
+                        if (combined.size > MAX_LOGS) combined.takeLast(MAX_LOGS) else combined
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Gagal memuat log yang tersimpan: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Gagal memuat log yang tersimpan: ${e.message}")
         }
     }
 

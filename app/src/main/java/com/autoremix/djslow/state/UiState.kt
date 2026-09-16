@@ -173,6 +173,9 @@ data class UiState(
     val isRenderedPaused: Boolean
         get() = audioState.isRenderedPaused
 
+    val renderedPlaybackStatus: com.autoremix.djslow.engine.RenderedPlaybackStatus
+        get() = audioState.renderedPlaybackStatus
+
     val renderedDurationMs: Long
         get() = audioState.renderedDurationMs.takeIf { it > 0 } ?: (validationResult?.durationMs ?: 0L)
 

@@ -28,6 +28,19 @@ enum class PlaybackEngineState(val label: String) {
 }
 
 /**
+ * Status pemutaran khusus untuk Monitor Hasil Remix Full.
+ */
+enum class RenderedPlaybackStatus(val label: String, val icon: String) {
+    BELUM_TERSEDIA("⚪ BELUM TERSEDIA", "⚪"),
+    SIAP("⚪ SIAP", "⚪"),
+    SEDANG_MEMUTAR("🟢 SEDANG MEMUTAR", "🟢"),
+    DIJEDA("🟡 DIJEDA", "🟡"),
+    BERHENTI("⏹ BERHENTI", "⏹"),
+    SELESAI("⏹ SELESAI", "⏹"),
+    ERROR("🔴 AUDIO TIDAK VALID", "🔴")
+}
+
+/**
  * Snapshot state lengkap Audio Engine.
  */
 data class AudioState(
@@ -46,6 +59,7 @@ data class AudioState(
     val renderedPositionMs: Long = 0L,
     val isRenderedPlaying: Boolean = false,
     val isRenderedPaused: Boolean = false,
+    val renderedPlaybackStatus: RenderedPlaybackStatus = RenderedPlaybackStatus.BELUM_TERSEDIA,
     val unmasteredWavPath: String? = null,
     val isUnmasteredPlaying: Boolean = false,
     val currentAbMode: com.autoremix.djslow.engine.preview.AbPreviewController.AbMode = com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED,

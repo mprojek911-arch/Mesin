@@ -3,6 +3,7 @@ package com.autoremix.djslow.engine
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import com.autoremix.djslow.engine.wav.WavValidator
 import com.autoremix.djslow.logchat.LogChatManager
 import com.autoremix.djslow.logchat.LogModule
 import com.autoremix.djslow.logchat.PipelineStage
@@ -10,6 +11,7 @@ import com.autoremix.djslow.logchat.StepStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +24,7 @@ import kotlinx.coroutines.launch
  * Audio Player untuk pemutaran audio nyata (Vokal dan Beat) menggunakan Android MediaPlayer.
  */
 class AudioPlayer(
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) {
     private var vocalMediaPlayer: MediaPlayer? = null
     private var beatMediaPlayer: MediaPlayer? = null
@@ -275,7 +277,47 @@ class AudioPlayer(
         return try {
             renderedMediaPlayer?.stop()
             renderedMediaPlayer?.release()
+            renderedMediaPlayer = null
 
+            // 1. Validasi berkas fisik & format WAV sebelum memuat
+            if (!file.exists() || file.length() <= 0L) {
+                val ex = IllegalStateException("🔴 AUDIO TIDAK VALID: Berkas tidak ditemukan atau kosong (0 byte)")
+                LogChatManager.error(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_ERROR: ${ex.message}",
+                    throwable = ex,
+                    stage = "MONITOR_HASIL_REMIX"
+                )
+                _audioState.update {
+                    it.copy(
+                        renderedPlaybackStatus = RenderedPlaybackStatus.ERROR,
+                        errorMessage = ex.message
+                    )
+                }
+                return Result.failure(ex)
+            }
+
+            val valRes = WavValidator.validate(file)
+            if (!valRes.isValid) {
+                val reason = valRes.errorMessage ?: "Format WAV atau integritas audio tidak valid"
+                val ex = IllegalStateException("🔴 AUDIO TIDAK VALID: $reason")
+                LogChatManager.error(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_ERROR: ${ex.message}",
+                    throwable = ex,
+                    stage = "MONITOR_HASIL_REMIX",
+                    file = file.name
+                )
+                _audioState.update {
+                    it.copy(
+                        renderedPlaybackStatus = RenderedPlaybackStatus.ERROR,
+                        errorMessage = ex.message
+                    )
+                }
+                return Result.failure(ex)
+            }
+
+            // 2. Inisialisasi MediaPlayer Android nyata
             val player = MediaPlayer()
             player.setAudioAttributes(
                 AudioAttributes.Builder()
@@ -285,78 +327,214 @@ class AudioPlayer(
             )
             player.setDataSource(file.absolutePath)
             player.prepare()
+            player.isLooping = false
             renderedMediaPlayer = player
 
-            val dur = player.duration.toLong()
+            val dur = if (player.duration > 0) player.duration.toLong() else valRes.durationMs
             _audioState.update {
                 it.copy(
                     renderedWavPath = file.absolutePath,
                     renderedDurationMs = dur,
                     renderedPositionMs = 0L,
                     isRenderedPlaying = false,
-                    isRenderedPaused = false
+                    isRenderedPaused = false,
+                    renderedPlaybackStatus = RenderedPlaybackStatus.SIAP,
+                    errorMessage = null
                 )
             }
 
+            // Aturan 9: Saat audio selesai -> STATUS = SELESAI, POSITION = TOTAL DURATION, JANGAN LOOP
             player.setOnCompletionListener {
+                val totalDur = if (player.duration > 0) player.duration.toLong() else _audioState.value.renderedDurationMs
                 _audioState.update {
                     it.copy(
                         isRenderedPlaying = false,
                         isRenderedPaused = false,
-                        renderedPositionMs = 0L
+                        renderedPositionMs = totalDur,
+                        renderedPlaybackStatus = RenderedPlaybackStatus.SELESAI
                     )
                 }
+                LogChatManager.info(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_COMPLETE: Pemutaran hasil remix selesai (durasi: ${formatTime(totalDur)})",
+                    stage = "MONITOR_HASIL_REMIX",
+                    file = file.name
+                )
             }
+
+            LogChatManager.info(
+                module = LogModule.PLAYBACK,
+                message = "🎧 HASIL REMIX SIAP DIPUTAR: ${file.name} (Durasi: ${formatTime(dur)})",
+                stage = "MONITOR_HASIL_REMIX",
+                file = file.name
+            )
+
             Result.success(Unit)
         } catch (e: Exception) {
-            _audioState.update { it.copy(errorMessage = "Gagal memuat berkas WAV hasil render: ${e.localizedMessage}") }
+            _audioState.update {
+                it.copy(
+                    renderedPlaybackStatus = RenderedPlaybackStatus.ERROR,
+                    errorMessage = "Gagal memuat berkas WAV hasil render: ${e.localizedMessage}"
+                )
+            }
+            LogChatManager.error(
+                module = LogModule.PLAYBACK,
+                message = "PLAYBACK_ERROR: Gagal memuat berkas WAV: ${e.message}",
+                throwable = e,
+                stage = "MONITOR_HASIL_REMIX",
+                file = file.name
+            )
             Result.failure(e)
         }
     }
 
+    /**
+     * Memutar seluruh hasil remix sebagai satu audio final.
+     * Menghentikan source player lain, memverifikasi file, dan memperbarui status pemutaran.
+     */
     fun playRendered(): Result<Unit> {
         return try {
-            // Hentikan pemutaran preview vokal dan beat agar tidak tumpang tindih
+            val path = _audioState.value.renderedWavPath
+            if (path == null) {
+                val ex = IllegalStateException("Belum ada file WAV hasil render.")
+                LogChatManager.error(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_ERROR: ${ex.message}",
+                    throwable = ex,
+                    stage = "MONITOR_HASIL_REMIX"
+                )
+                return Result.failure(ex)
+            }
+
+            val file = java.io.File(path)
+            // Validasi sebelum mengizinkan play (Aturan 13)
+            if (!file.exists() || file.length() <= 0L) {
+                val ex = IllegalStateException("🔴 AUDIO TIDAK VALID: Berkas tidak ditemukan atau kosong")
+                LogChatManager.error(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_ERROR: ${ex.message}",
+                    throwable = ex,
+                    stage = "MONITOR_HASIL_REMIX"
+                )
+                _audioState.update {
+                    it.copy(
+                        renderedPlaybackStatus = RenderedPlaybackStatus.ERROR,
+                        errorMessage = ex.message
+                    )
+                }
+                return Result.failure(ex)
+            }
+
+            // 1. Stop / pause source player lain (Aturan 6)
             stopVocalInternal()
             stopBeatInternal()
+            unmasteredMediaPlayer?.let { if (it.isPlaying) it.pause() }
 
-            val player = renderedMediaPlayer
-                ?: return Result.failure(IllegalStateException("Belum ada file WAV hasil render."))
+            // 2. Load hasil remix jika belum
+            val player = renderedMediaPlayer ?: run {
+                val initRes = setRenderedWav(file)
+                if (initRes.isFailure) return initRes
+                renderedMediaPlayer ?: return Result.failure(IllegalStateException("Gagal inisialisasi media player."))
+            }
 
+            val wasPaused = _audioState.value.isRenderedPaused
+            val wasCompleted = _audioState.value.renderedPlaybackStatus == RenderedPlaybackStatus.SELESAI ||
+                    player.currentPosition >= (player.duration - 200).coerceAtLeast(0)
+
+            if (wasCompleted) {
+                player.seekTo(0)
+                _audioState.update { it.copy(renderedPositionMs = 0L) }
+            }
+
+            // 3. Start hasil remix (Aturan 17: renderedMediaPlayer.start() -> Audio Output)
             player.start()
+
+            // 4. Update playback state & position
+            val currentPos = player.currentPosition.toLong()
             _audioState.update {
                 it.copy(
                     isRenderedPlaying = true,
-                    isRenderedPaused = false
+                    isRenderedPaused = false,
+                    renderedPositionMs = currentPos,
+                    renderedPlaybackStatus = RenderedPlaybackStatus.SEDANG_MEMUTAR,
+                    errorMessage = null
                 )
             }
+
+            if (wasPaused) {
+                LogChatManager.info(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_RESUME: Melanjutkan pemutaran hasil remix dari ${formatTime(currentPos)}",
+                    stage = "MONITOR_HASIL_REMIX",
+                    file = file.name
+                )
+            } else {
+                LogChatManager.info(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_START: Memulai pemutaran hasil remix full",
+                    stage = "MONITOR_HASIL_REMIX",
+                    file = file.name
+                )
+            }
+
             Result.success(Unit)
         } catch (e: Exception) {
-            _audioState.update { it.copy(errorMessage = "Gagal memutar hasil WAV: ${e.localizedMessage}") }
+            _audioState.update {
+                it.copy(
+                    isRenderedPlaying = false,
+                    renderedPlaybackStatus = RenderedPlaybackStatus.ERROR,
+                    errorMessage = "Gagal memutar hasil WAV: ${e.localizedMessage}"
+                )
+            }
+            LogChatManager.error(
+                module = LogModule.PLAYBACK,
+                message = "PLAYBACK_ERROR: Gagal memutar hasil remix: ${e.message}",
+                throwable = e,
+                stage = "MONITOR_HASIL_REMIX"
+            )
             Result.failure(e)
         }
     }
 
+    /**
+     * Menjeda pemutaran hasil remix tanpa mereset posisi audio (Aturan 7).
+     */
     fun pauseRendered(): Result<Unit> {
         return try {
             renderedMediaPlayer?.let { player ->
                 if (player.isPlaying) {
                     player.pause()
                 }
+                val pos = player.currentPosition.toLong()
                 _audioState.update {
                     it.copy(
                         isRenderedPlaying = false,
                         isRenderedPaused = true,
-                        renderedPositionMs = player.currentPosition.toLong()
+                        renderedPositionMs = pos,
+                        renderedPlaybackStatus = RenderedPlaybackStatus.DIJEDA
                     )
                 }
+                LogChatManager.info(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_PAUSE: Pemutaran hasil remix dijeda pada ${formatTime(pos)}",
+                    stage = "MONITOR_HASIL_REMIX"
+                )
             }
             Result.success(Unit)
         } catch (e: Exception) {
+            LogChatManager.error(
+                module = LogModule.PLAYBACK,
+                message = "PLAYBACK_ERROR: Gagal menjeda hasil remix: ${e.message}",
+                throwable = e,
+                stage = "MONITOR_HASIL_REMIX"
+            )
             Result.failure(e)
         }
     }
 
+    /**
+     * Menghentikan pemutaran hasil remix dan mereset posisi ke 00:00 (Aturan 8).
+     */
     fun stopRendered(): Result<Unit> {
         return try {
             renderedMediaPlayer?.let { player ->
@@ -369,24 +547,94 @@ class AudioPlayer(
                     it.copy(
                         isRenderedPlaying = false,
                         isRenderedPaused = false,
-                        renderedPositionMs = 0L
+                        renderedPositionMs = 0L,
+                        renderedPlaybackStatus = RenderedPlaybackStatus.BERHENTI
                     )
                 }
+                LogChatManager.info(
+                    module = LogModule.PLAYBACK,
+                    message = "PLAYBACK_STOP: Pemutaran dihentikan, posisi direset ke 00:00",
+                    stage = "MONITOR_HASIL_REMIX"
+                )
             }
             Result.success(Unit)
         } catch (e: Exception) {
+            LogChatManager.error(
+                module = LogModule.PLAYBACK,
+                message = "PLAYBACK_ERROR: Gagal menghentikan pemutaran: ${e.message}",
+                throwable = e,
+                stage = "MONITOR_HASIL_REMIX"
+            )
             Result.failure(e)
         }
     }
 
+    /**
+     * Menggeser posisi pemutaran hasil remix ke fraksi 0..1 (Aturan 4).
+     */
     fun seekRendered(positionFraction: Float) {
         val frac = positionFraction.coerceIn(0f, 1f)
         try {
-            val targetMs = ((renderedMediaPlayer?.duration ?: 0) * frac).toInt()
-            renderedMediaPlayer?.seekTo(targetMs)
-            unmasteredMediaPlayer?.seekTo(targetMs)
-            _audioState.update { it.copy(renderedPositionMs = targetMs.toLong()) }
+            val totalDur = (renderedMediaPlayer?.duration?.toLong() ?: _audioState.value.renderedDurationMs).coerceAtLeast(1L)
+            val targetMs = (totalDur * frac).toLong()
+            seekRenderedMs(targetMs)
         } catch (_: Exception) {}
+    }
+
+    /**
+     * Menggeser posisi audio langsung dalam milidetik.
+     */
+    fun seekRenderedMs(targetMs: Long) {
+        try {
+            val totalDur = (renderedMediaPlayer?.duration?.toLong() ?: _audioState.value.renderedDurationMs).coerceAtLeast(1L)
+            val clampedMs = targetMs.coerceIn(0L, totalDur).toInt()
+            renderedMediaPlayer?.seekTo(clampedMs)
+            unmasteredMediaPlayer?.seekTo(clampedMs)
+
+            val newStatus = if (clampedMs >= totalDur - 100) {
+                RenderedPlaybackStatus.SELESAI
+            } else if (_audioState.value.isRenderedPlaying) {
+                RenderedPlaybackStatus.SEDANG_MEMUTAR
+            } else if (_audioState.value.isRenderedPaused) {
+                RenderedPlaybackStatus.DIJEDA
+            } else {
+                _audioState.value.renderedPlaybackStatus
+            }
+
+            _audioState.update {
+                it.copy(
+                    renderedPositionMs = clampedMs.toLong(),
+                    renderedPlaybackStatus = newStatus
+                )
+            }
+            LogChatManager.info(
+                module = LogModule.PLAYBACK,
+                message = "PLAYBACK_SEEK: Menggeser posisi audio ke ${formatTime(clampedMs.toLong())}",
+                stage = "MONITOR_HASIL_REMIX"
+            )
+        } catch (e: Exception) {
+            LogChatManager.error(
+                module = LogModule.PLAYBACK,
+                message = "PLAYBACK_ERROR: Gagal melakukan seek: ${e.message}",
+                throwable = e,
+                stage = "MONITOR_HASIL_REMIX"
+            )
+        }
+    }
+
+    /**
+     * Mundur atau maju relatif (misal -10s atau +10s).
+     */
+    fun seekRelative(deltaMs: Long) {
+        val curPos = renderedMediaPlayer?.currentPosition?.toLong() ?: _audioState.value.renderedPositionMs
+        seekRenderedMs(curPos + deltaMs)
+    }
+
+    private fun formatTime(ms: Long): String {
+        val totalSec = (ms / 1000).coerceAtLeast(0)
+        val min = totalSec / 60
+        val sec = totalSec % 60
+        return String.format(java.util.Locale.US, "%02d:%02d", min, sec)
     }
 
     /**
@@ -553,7 +801,7 @@ class AudioPlayer(
 
     private fun startPositionTicker() {
         positionTickerJob?.cancel()
-        positionTickerJob = scope.launch(Dispatchers.Main) {
+        positionTickerJob = scope.launch {
             while (isActive) {
                 try {
                     val vocalPos = vocalMediaPlayer?.takeIf { it.isPlaying }?.currentPosition?.toLong()

@@ -1159,6 +1159,8 @@ class MainViewModel : ViewModel() {
         val res = audioPlayer.playRendered()
         if (res.isSuccess) {
             _statusMessage.value = "MEMUTAR MASTER HASIL AUDIO NYATA..."
+        } else {
+            _errorMessage.value = res.exceptionOrNull()?.message ?: "Gagal memutar hasil audio"
         }
     }
 
@@ -1174,6 +1176,10 @@ class MainViewModel : ViewModel() {
 
     fun onSeekRendered(fraction: Float) {
         audioPlayer.seekRendered(fraction)
+    }
+
+    fun onSeekRelative(deltaMs: Long) {
+        audioPlayer.seekRelative(deltaMs)
     }
 
     fun clearError() {
