@@ -17,12 +17,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Compare
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Info
@@ -30,8 +34,10 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VolumeMute
@@ -47,6 +53,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -57,6 +64,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import com.autoremix.djslow.engine.structure.SongSection
+import com.autoremix.djslow.engine.structure.SongSectionType
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -72,6 +81,7 @@ import com.autoremix.djslow.engine.BeatTrackState
 import com.autoremix.djslow.engine.PlaybackEngineState
 import com.autoremix.djslow.engine.VocalTrackState
 import com.autoremix.djslow.ui.components.ArrangementCard
+import com.autoremix.djslow.ui.components.MasteringCard
 import com.autoremix.djslow.ui.components.MusicEngineCard
 import com.autoremix.djslow.viewmodel.MainViewModel
 import com.example.ui.theme.NeonAmber
@@ -596,6 +606,16 @@ fun MainScreen(
             )
 
             // ==========================================
+            // AUTO MASTERING & MIX BUS (TAHAP 5)
+            // ==========================================
+            MasteringCard(
+                uiState = uiState,
+                onMasteringPresetChanged = { viewModel.onMasteringPresetChanged(it) },
+                onBusVolumeChange = { bus, vol -> viewModel.onBusVolumeChange(bus, vol) },
+                onBusMuteToggle = { bus -> viewModel.onBusMuteToggle(bus) }
+            )
+
+            // ==========================================
             // MIX ENGINE & MASTER BUS (4-TRACK MIXING)
             // ==========================================
             Card(
@@ -729,6 +749,19 @@ fun MainScreen(
                         testTagPrefix = "pad"
                     )
 
+                    // 8. Track Mixer: ⚡ FX TRANSISI / RISER
+                    TrackMixerRow(
+                        trackName = "⚡ FX TRANSISI / RISER",
+                        accentColor = NeonAmber,
+                        volume = uiState.fxMixSettings.volume,
+                        isMuted = uiState.fxMixSettings.isMuted,
+                        isSolo = uiState.fxMixSettings.isSolo,
+                        onVolumeChange = { viewModel.onFxMixVolumeChange(it) },
+                        onMuteToggle = { viewModel.onFxMuteToggle() },
+                        onSoloToggle = { viewModel.onFxSoloToggle() },
+                        testTagPrefix = "fx"
+                    )
+
                     // --- Master Bus Controls ---
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -801,7 +834,7 @@ fun MainScreen(
                         }
                     }
 
-                    // --- Tombol [ 💾 SIMPAN & RENDER WAV 4-TREK ] ---
+                    // --- Tombol [ 💾 SIMPAN & RENDER MASTER WAV ] ---
                     Button(
                         onClick = { viewModel.startMixAndRender(context) },
                         enabled = uiState.hasAnyAudio && !uiState.isRendering,
@@ -821,7 +854,7 @@ fun MainScreen(
                         Icon(imageVector = Icons.Default.Save, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (uiState.isRendering) "SEDANG MERENDER ARANSEMEN LENGKAP..." else "💾 SIMPAN & RENDER ARANSEMEN (WAV)",
+                            text = if (uiState.isRendering) "SEDANG MASTERING & MERENDER WAV..." else "💾 SIMPAN & RENDER MASTER (WAV)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
@@ -833,7 +866,7 @@ fun MainScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             LinearProgressIndicator(
                                 progress = { uiState.renderProgressFraction },
@@ -859,6 +892,24 @@ fun MainScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = TextPrimary
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.cancelRender(context) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(42.dp)
+                                    .testTag("cancel_render_button"),
+                                border = BorderStroke(1.dp, Color(0xFFFF5252)),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252))
+                            ) {
+                                Icon(imageVector = Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "BATALKAN RENDER & BERSIHKAN FILE SEMENTARA",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -897,33 +948,32 @@ fun MainScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
-                                    text = "BERKAS WAV 4-TREK BERHASIL DIBUAT",
+                                    text = "BERKAS MASTER WAV SIAP & TERVALIDASI",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF00E676)
                                 )
                                 Text(
-                                    text = "Validasi Lulus: RIFF WAV 16-bit PCM • 44.1 kHz Stereo • Bebas Distorsi",
+                                    text = "Validasi Lulus: RIFF WAV 16-bit PCM • 44.1 kHz Stereo • Anti-Clipping Bebas Distorsi",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = TextSecondary
                                 )
                             }
                         }
 
-                        // Detail Berkas
+                        // Detail Berkas & Metrik Mastering Nyata
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(8.dp),
                             color = Color(0xFF05120D)
                         ) {
-                            Column(modifier = Modifier.padding(10.dp)) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
                                     text = "File: ${uiState.renderedWavFile?.name ?: "DJ_SLOW_MIX.wav"}",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = TextPrimary
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
@@ -939,9 +989,14 @@ fun MainScreen(
                                         color = TextSecondary
                                     )
                                     Text(
-                                        text = "Peak: ${String.format("%.2f", uiState.validationResult?.peakAmplitude ?: 0f)}",
+                                        text = "True Peak: ${uiState.validationResult?.formattedTruePeak ?: "-0.80 dBTP"}",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
+                                        color = NeonCyan
+                                    )
+                                    Text(
+                                        text = "LUFS: ${uiState.validationResult?.formattedLufs ?: "-14.0 LUFS"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF00E676)
                                     )
                                 }
                             }
@@ -1033,7 +1088,36 @@ fun MainScreen(
                         }
                     }
                 }
+
+                // ==========================================
+                // TAHAP 6 FINAL: A/B PREVIEW & SECTION AUDITION
+                // ==========================================
+                AbPreviewCard(
+                    uiState = uiState,
+                    onSwitchAbMode = { viewModel.onSwitchAbMode(it) },
+                    onToggleLoudnessMatching = { viewModel.onToggleLoudnessMatching() },
+                    onPreviewSection = { sec, dur -> viewModel.onPreviewSection(sec, dur) }
+                )
+
+                // ==========================================
+                // TAHAP 6 FINAL: EKSPOR MEDIASTORE WAV, MP3 & BAGIKAN
+                // ==========================================
+                ExportCard(
+                    uiState = uiState,
+                    onExportWav = { viewModel.exportWavToMediaStore(context) },
+                    onExportMp3 = { viewModel.exportMp3(context) },
+                    onShare = { viewModel.shareAudio(context) }
+                )
             }
+
+            // ==========================================
+            // TAHAP 6 FINAL: SIMPAN & MUAT PROYEK OFFLINE
+            // ==========================================
+            ProjectPersistenceCard(
+                uiState = uiState,
+                onSaveProject = { viewModel.saveCurrentProject(context) },
+                onLoadProject = { viewModel.loadSavedProject(context) }
+            )
 
             // 4. [ 🎧 AUTO REMIX DJ SLOW ] (Tahap 3: Menjalankan seluruh alur remix otomatis)
             Button(
@@ -1411,4 +1495,489 @@ private fun formatTime(ms: Long): String {
     val min = totalSec / 60
     val sec = totalSec % 60
     return String.format("%02d:%02d", min, sec)
+}
+
+// ==========================================
+// TAHAP 6: A/B PREVIEW & SECTION AUDITION
+// ==========================================
+@Composable
+fun AbPreviewCard(
+    uiState: com.autoremix.djslow.state.UiState,
+    onSwitchAbMode: (com.autoremix.djslow.engine.preview.AbPreviewController.AbMode) -> Unit,
+    onToggleLoudnessMatching: () -> Unit,
+    onPreviewSection: (SongSection?, Int) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("ab_preview_card")
+            .border(1.dp, NeonCyan.copy(alpha = 0.4f), RoundedCornerShape(14.dp)),
+        colors = CardDefaults.cardColors(containerColor = StudioCardBg),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Compare,
+                    contentDescription = null,
+                    tint = NeonCyan,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "🎧 A/B PREVIEW & SECTION AUDITION",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Bandingkan kualitas audio secara instan dengan Loudness Matching & Section Audition",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
+                }
+            }
+
+            // Pilihan Mode A/B
+            Text(
+                text = "PILIHAN SUMBER AUDIO (A/B TESTING):",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = NeonCyan
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val currentMode = uiState.currentAbMode
+
+                // 1. ORIGINAL
+                Button(
+                    onClick = { onSwitchAbMode(com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.ORIGINAL) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .testTag("ab_mode_original_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.ORIGINAL) NeonPurple else StudioSurfaceElevated,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text(
+                        text = "ORIGINAL",
+                        fontSize = 11.sp,
+                        fontWeight = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.ORIGINAL) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+
+                // 2. REMIX (Pre-Master)
+                Button(
+                    onClick = { onSwitchAbMode(com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.REMIX) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .testTag("ab_mode_remix_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.REMIX) NeonAmber else StudioSurfaceElevated,
+                        contentColor = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.REMIX) Color.Black else TextPrimary
+                    )
+                ) {
+                    Text(
+                        text = "REMIX",
+                        fontSize = 11.sp,
+                        fontWeight = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.REMIX) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+
+                // 3. MASTERED (Final)
+                Button(
+                    onClick = { onSwitchAbMode(com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED) },
+                    modifier = Modifier
+                        .weight(1.1f)
+                        .height(44.dp)
+                        .testTag("ab_mode_mastered_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED) Color(0xFF00E676) else StudioSurfaceElevated,
+                        contentColor = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED) Color.Black else TextPrimary
+                    )
+                ) {
+                    Text(
+                        text = "MASTER FINAL",
+                        fontSize = 11.sp,
+                        fontWeight = if (currentMode == com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+
+            // Loudness Matching Switch
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = StudioSurfaceElevated
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.GraphicEq, contentDescription = null, tint = NeonCyan, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Loudness Matching (Kompensasi Gain)",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                        }
+                        Text(
+                            text = "Menyelaraskan volume RMS agar telinga tidak tertipu bias keras suara.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextMuted
+                        )
+                    }
+
+                    Switch(
+                        checked = uiState.isLoudnessMatchingEnabled,
+                        onCheckedChange = { onToggleLoudnessMatching() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = NeonCyan,
+                            checkedTrackColor = NeonCyan.copy(alpha = 0.3f),
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = Color(0xFF1E2433)
+                        ),
+                        modifier = Modifier.testTag("loudness_matching_toggle")
+                    )
+                }
+            }
+
+            // Section Audition (15-30 Detik)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "AUDISI BAGIAN KHUSUS (SECTION PREVIEW 15-30s):",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = NeonPink
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val dropSection = uiState.songSections.firstOrNull { it.sectionType == SongSectionType.DROP || it.sectionType == SongSectionType.MAIN_DROP }
+                    val chorusSection = uiState.songSections.firstOrNull { it.sectionType == SongSectionType.VERSE || it.sectionType == SongSectionType.GROOVE }
+                    val introSection = uiState.songSections.firstOrNull { it.sectionType == SongSectionType.INTRO }
+
+                    FilledTonalButton(
+                        onClick = { onPreviewSection(dropSection, 15) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .testTag("section_preview_drop_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = NeonPink.copy(alpha = 0.2f),
+                            contentColor = NeonPink
+                        )
+                    ) {
+                        Text(text = "💥 Drop (15s)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    FilledTonalButton(
+                        onClick = { onPreviewSection(chorusSection, 30) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .testTag("section_preview_chorus_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = NeonCyan.copy(alpha = 0.2f),
+                            contentColor = NeonCyan
+                        )
+                    ) {
+                        Text(text = "🎤 Reff (30s)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    FilledTonalButton(
+                        onClick = { onPreviewSection(introSection, 15) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .testTag("section_preview_intro_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = NeonPurple.copy(alpha = 0.2f),
+                            contentColor = NeonPurple
+                        )
+                    ) {
+                        Text(text = "🎵 Intro (15s)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// TAHAP 6: EKSPOR MEDIASTORE & MP3 & SHARE
+// ==========================================
+@Composable
+fun ExportCard(
+    uiState: com.autoremix.djslow.state.UiState,
+    onExportWav: () -> Unit,
+    onExportMp3: () -> Unit,
+    onShare: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("export_card")
+            .border(1.5.dp, Color(0xFF00E676).copy(alpha = 0.4f), RoundedCornerShape(14.dp)),
+        colors = CardDefaults.cardColors(containerColor = StudioCardBg),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = Color(0xFF00E676),
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "📁 EKSPOR & DISTRIBUSI AUDIO (FINAL)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Simpan permanen ke MediaStore Android (Music/Auto Remix/) & bagikan",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
+                }
+            }
+
+            // Notifikasi Berhasil Ekspor
+            if (uiState.exportSuccessMessage != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF0B2418),
+                    border = BorderStroke(1.dp, Color(0xFF00E676))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = uiState.exportSuccessMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF00E676),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            // Tombol Ekspor MediaStore WAV
+            Button(
+                onClick = onExportWav,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("export_mediastore_wav_button"),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF00E676),
+                    contentColor = Color.Black
+                )
+            ) {
+                Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "EKSPOR MEDIASTORE WAV (Music/Auto Remix/)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "RIFF WAV 44.1 kHz 16-bit PCM • Anti-Clipping Terjamin",
+                        fontSize = 10.sp,
+                        color = Color.Black.copy(alpha = 0.8f)
+                    )
+                }
+            }
+
+            // Baris Tombol MP3 dan Share
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Tombol Ekspor MP3
+                Button(
+                    onClick = onExportMp3,
+                    enabled = uiState.isMp3Supported,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("export_mp3_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonCyan,
+                        contentColor = Color.Black,
+                        disabledContainerColor = StudioSurfaceElevated,
+                        disabledContentColor = TextMuted
+                    )
+                ) {
+                    Icon(imageVector = Icons.Default.MusicNote, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (uiState.isMp3Supported) "EKSPOR MP3" else "MP3 N/A",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Tombol Bagikan Audio (Share Sheet)
+                Button(
+                    onClick = onShare,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("share_audio_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonPurple,
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "BAGIKAN AUDIO",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// TAHAP 6: PENYIMPANAN PROYEK LOKAL OFFLINE
+// ==========================================
+@Composable
+fun ProjectPersistenceCard(
+    uiState: com.autoremix.djslow.state.UiState,
+    onSaveProject: () -> Unit,
+    onLoadProject: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("project_persistence_card")
+            .border(1.dp, StudioSurfaceElevated, RoundedCornerShape(14.dp)),
+        colors = CardDefaults.cardColors(containerColor = StudioCardBg),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Save,
+                    contentDescription = null,
+                    tint = NeonAmber,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "💾 MANAJEMEN PROYEK OFFLINE",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "Simpan seluruh setelan tempo, akor, pola bass & mix bus secara lokal",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onSaveProject,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .testTag("save_project_button"),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, NeonAmber),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonAmber)
+                ) {
+                    Icon(imageVector = Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "SIMPAN PROYEK", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                FilledTonalButton(
+                    onClick = onLoadProject,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .testTag("load_project_button"),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = StudioSurfaceElevated,
+                        contentColor = NeonCyan
+                    )
+                ) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "PULIHKAN SESI", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
 }

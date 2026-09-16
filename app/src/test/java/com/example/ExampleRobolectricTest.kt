@@ -343,12 +343,18 @@ class ExampleRobolectricTest {
     composeTestRule.onNodeWithTag("bass_section").assertExists()
     composeTestRule.onNodeWithTag("bass_pattern_text").assertExists()
 
-    // 4-Track Mixer
+    // 4-Track Mixer & FX
     composeTestRule.onNodeWithTag("mix_section").assertExists()
     composeTestRule.onNodeWithTag("vocal_mix_volume_slider").assertExists()
     composeTestRule.onNodeWithTag("beat_mix_volume_slider").assertExists()
     composeTestRule.onNodeWithTag("chord_mix_volume_slider").assertExists()
     composeTestRule.onNodeWithTag("bass_mix_volume_slider").assertExists()
     composeTestRule.onNodeWithTag("mix_and_render_button").assertExists()
+
+    // Tahap 5: Mastering & 6-Bus Mixer Card
+    composeTestRule.onNodeWithTag("mastering_card").assertExists()
+    composeTestRule.onNodeWithTag("preset_dj_slow").assertExists()
+    composeTestRule.onNodeWithTag("vocal_bus_slider").assertExists()
+    composeTestRule.onNodeWithTag("master_bus_slider").assertExists()
   }
 }

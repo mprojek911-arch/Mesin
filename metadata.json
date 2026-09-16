@@ -1,6 +1,6 @@
 {
   "name": "AUTO REMIX DJ SLOW",
-  "description": "Aplikasi AUTO REMIX DJ SLOW Tahap 4: Mesin Aransemen Struktur & Energi Auto DJ (Drum Engine, Melody Engine, Pad Engine, Auto Arranger, Kick-Bass Sidechain Ducking, Transition FX, Multi-Track Mixing PCM Float32, WAV Render 44.1kHz).",
+  "description": "Aplikasi AUTO REMIX DJ SLOW Tahap 6 Final: Ekspor MediaStore WAV (Music/Auto Remix/), Ekspor MP3 Lokal (jika tersedia), A/B Preview dengan Loudness Matching, Section Preview 15-30 detik, Batalkan Render & Clean Temp, Simpan Proyek Lokal Offline, serta Validasi Bebas Clipping.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

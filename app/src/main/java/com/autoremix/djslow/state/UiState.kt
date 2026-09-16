@@ -7,6 +7,10 @@ import com.autoremix.djslow.engine.analysis.AutoEnergyAnalyzer
 import com.autoremix.djslow.engine.analysis.BeatContentAnalyzer.BeatContentAnalysis
 import com.autoremix.djslow.engine.analysis.BpmDetector
 import com.autoremix.djslow.engine.arrangement.AutoDjPreset
+import com.autoremix.djslow.engine.dsp.LoudnessMeter
+import com.autoremix.djslow.engine.mastering.MasteringPreset
+import com.autoremix.djslow.engine.mix.BusSettings
+import com.autoremix.djslow.engine.mix.BusType
 import com.autoremix.djslow.engine.mix.MixTrackSettings
 import com.autoremix.djslow.engine.music.Chord
 import com.autoremix.djslow.engine.music.ChordType
@@ -24,19 +28,20 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * UI State untuk tampilan Beranda AUTO REMIX DJ SLOW:
- * Tahap 1 (Pemilihan & Playback), Tahap 2 (Mixing & WAV Render),
- * Tahap 3 (BPM, Key, Chord, Bass), dan Tahap 4 (Drum, Melodi, Pad, Auto DJ Energy & Structure).
+ * UI State untuk tampilan Beranda AUTO REMIX DJ SLOW Tahap 5:
+ * Kualitas Audio, Mix Bus, Auto Gain Staging, Vocal Processing & Ducking,
+ * Kick/Bass Separation, Drum & Bass Processing, Stereo Engine, Auto Mastering,
+ * Loudness LUFS Nyata, Limiter & Anti Clipping.
  */
 data class UiState(
-    val stageTitle: String = "TAHAP 4 — ARRANGEMENT (DRUM + MELODY + PAD + DJ STRUCTURE)",
+    val stageTitle: String = "TAHAP 5 — KUALITAS AUDIO & MASTERING (MIX BUS, DSP, LUFS, ANTI-CLIPPING)",
     val vocalSource: AudioSource? = null,
     val beatSource: AudioSource? = null,
     val audioState: AudioState = AudioState(),
-    val statusMessage: String = "Siap. Silakan pilih vokal & beat, lalu klik Analisis & Aransemen.",
+    val statusMessage: String = "Siap. Silakan pilih vokal & beat, sesuaikan bus mixer & preset mastering, lalu klik Render Master.",
     val errorMessage: String? = null,
 
-    // Parameter Mixer Multi-Track (Vokal, Beat, Drum, Bass, Chord, Melodi, Pad)
+    // Parameter Mixer Multi-Track (Vokal, Beat, Drum, Bass, Chord, Melodi, Pad, FX)
     val vocalMixSettings: MixTrackSettings = MixTrackSettings(volume = 1.0f),
     val beatMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.8f),
     val drumMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.85f),
@@ -44,8 +49,21 @@ data class UiState(
     val chordMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.70f),
     val melodyMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.80f),
     val padMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.75f),
+    val fxMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.80f),
+
+    // Parameter Mix Bus (Tahap 5)
+    val vocalBusSettings: BusSettings = BusSettings(BusType.VOCAL_BUS, volume = 1.0f),
+    val beatBusSettings: BusSettings = BusSettings(BusType.BEAT_BUS, volume = 1.0f),
+    val drumBusSettings: BusSettings = BusSettings(BusType.DRUM_BUS, volume = 1.0f),
+    val bassBusSettings: BusSettings = BusSettings(BusType.BASS_BUS, volume = 1.0f),
+    val musicBusSettings: BusSettings = BusSettings(BusType.MUSIC_BUS, volume = 1.0f),
+
     val masterGain: Float = 0.90f,
     val isAutoMixEnabled: Boolean = true,
+
+    // Parameter Auto Mastering (Tahap 5)
+    val masteringPreset: MasteringPreset = MasteringPreset.DJ_SLOW,
+    val loudnessReport: LoudnessMeter.LoudnessReport? = null,
 
     // Parameter Mesin Musik Tahap 3
     val vocalBpm: BpmDetector.BpmResult? = null,
@@ -89,8 +107,21 @@ data class UiState(
     val renderProgressFraction: Float = 0.0f,
     val renderStageText: String = "",
     val renderedWavFile: File? = null,
-    val validationResult: WavValidator.ValidationResult? = null
+    val validationResult: WavValidator.ValidationResult? = null,
+
+    // Tahap 6 Final: Ekspor MediaStore, MP3, A/B Preview, Proyek
+    val exportedWavFile: File? = null,
+    val exportedMp3File: File? = null,
+    val isMp3Supported: Boolean = false,
+    val currentAbMode: com.autoremix.djslow.engine.preview.AbPreviewController.AbMode = com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED,
+    val isLoudnessMatchingEnabled: Boolean = false,
+    val unmasteredLufs: Float = -14.0f,
+    val hasSavedProject: Boolean = false,
+    val exportSuccessMessage: String? = null
 ) {
+    val masterBusSettings: BusSettings
+        get() = BusSettings(BusType.MASTER_BUS, volume = masterGain)
+
     val isVocalSelected: Boolean
         get() = vocalSource != null
 

@@ -23,6 +23,7 @@ class AudioPlayer(
     private var vocalMediaPlayer: MediaPlayer? = null
     private var beatMediaPlayer: MediaPlayer? = null
     private var renderedMediaPlayer: MediaPlayer? = null
+    private var unmasteredMediaPlayer: MediaPlayer? = null
 
     private var vocalSource: AudioSource? = null
     private var beatSource: AudioSource? = null
@@ -31,6 +32,7 @@ class AudioPlayer(
     val audioState: StateFlow<AudioState> = _audioState.asStateFlow()
 
     private var positionTickerJob: Job? = null
+    private var sectionLimitJob: Job? = null
 
     init {
         startPositionTicker()
@@ -366,12 +368,173 @@ class AudioPlayer(
     fun seekRendered(positionFraction: Float) {
         val frac = positionFraction.coerceIn(0f, 1f)
         try {
-            renderedMediaPlayer?.let { player ->
-                val targetMs = (player.duration * frac).toInt()
-                player.seekTo(targetMs)
-                _audioState.update { it.copy(renderedPositionMs = targetMs.toLong()) }
-            }
+            val targetMs = ((renderedMediaPlayer?.duration ?: 0) * frac).toInt()
+            renderedMediaPlayer?.seekTo(targetMs)
+            unmasteredMediaPlayer?.seekTo(targetMs)
+            _audioState.update { it.copy(renderedPositionMs = targetMs.toLong()) }
         } catch (_: Exception) {}
+    }
+
+    /**
+     * Memuat berkas WAV unmastered (pre-master mix) untuk perbandingan A/B.
+     */
+    fun setUnmasteredWav(file: java.io.File): Result<Unit> {
+        return try {
+            unmasteredMediaPlayer?.stop()
+            unmasteredMediaPlayer?.release()
+
+            val player = MediaPlayer()
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .build()
+            )
+            player.setDataSource(file.absolutePath)
+            player.prepare()
+            unmasteredMediaPlayer = player
+
+            _audioState.update {
+                it.copy(
+                    unmasteredWavPath = file.absolutePath,
+                    isUnmasteredPlaying = false
+                )
+            }
+
+            player.setOnCompletionListener {
+                _audioState.update { it.copy(isUnmasteredPlaying = false) }
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Memutar audio dengan memilih sumber A/B secara sinkron:
+     * - [ORIGINAL]: Trek mentah vokal & beat
+     * - [REMIX]: Mix unmastered pre-master
+     * - [MASTERED]: Master final dengan Loudness Matching gain
+     */
+    fun switchAbMode(
+        mode: com.autoremix.djslow.engine.preview.AbPreviewController.AbMode,
+        gainFactor: Float = 1.0f
+    ): Result<Unit> {
+        return try {
+            val currentPos = renderedMediaPlayer?.currentPosition
+                ?: unmasteredMediaPlayer?.currentPosition
+                ?: vocalMediaPlayer?.currentPosition
+                ?: 0
+
+            _audioState.update {
+                it.copy(
+                    currentAbMode = mode,
+                    loudnessGainFactor = gainFactor
+                )
+            }
+
+            // Hentikan sumber yang tidak aktif
+            when (mode) {
+                com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.ORIGINAL -> {
+                    renderedMediaPlayer?.pause()
+                    unmasteredMediaPlayer?.pause()
+                    vocalMediaPlayer?.let {
+                        it.seekTo(currentPos)
+                        if (!it.isPlaying) it.start()
+                    }
+                    beatMediaPlayer?.let {
+                        it.seekTo(currentPos)
+                        if (!it.isPlaying) it.start()
+                    }
+                    _audioState.update {
+                        it.copy(
+                            playbackState = PlaybackEngineState.MEMUTAR,
+                            isRenderedPlaying = false,
+                            isUnmasteredPlaying = false
+                        )
+                    }
+                }
+                com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.REMIX -> {
+                    stopVocalInternal()
+                    stopBeatInternal()
+                    renderedMediaPlayer?.pause()
+                    unmasteredMediaPlayer?.let { player ->
+                        player.seekTo(currentPos)
+                        player.setVolume(1.0f, 1.0f)
+                        if (!player.isPlaying) player.start()
+                        _audioState.update {
+                            it.copy(
+                                isUnmasteredPlaying = true,
+                                isRenderedPlaying = false,
+                                playbackState = PlaybackEngineState.MEMUTAR
+                            )
+                        }
+                    }
+                }
+                com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED -> {
+                    stopVocalInternal()
+                    stopBeatInternal()
+                    unmasteredMediaPlayer?.pause()
+                    renderedMediaPlayer?.let { player ->
+                        val vol = gainFactor.coerceIn(0.1f, 1.0f)
+                        player.setVolume(vol, vol)
+                        player.seekTo(currentPos)
+                        if (!player.isPlaying) player.start()
+                        _audioState.update {
+                            it.copy(
+                                isRenderedPlaying = true,
+                                isUnmasteredPlaying = false,
+                                playbackState = PlaybackEngineState.MEMUTAR
+                            )
+                        }
+                    }
+                }
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Memutar Section Preview (15-30 detik) dari posisi tertentu, lalu berhenti otomatis.
+     */
+    fun playSectionPreview(startMs: Long, durationMs: Long): Result<Unit> {
+        sectionLimitJob?.cancel()
+        return try {
+            val player = renderedMediaPlayer ?: unmasteredMediaPlayer
+                ?: return Result.failure(IllegalStateException("Belum ada audio yang dirender untuk preview."))
+
+            stopVocalInternal()
+            stopBeatInternal()
+            player.seekTo(startMs.toInt())
+            player.start()
+
+            _audioState.update {
+                it.copy(
+                    isRenderedPlaying = true,
+                    isRenderedPaused = false,
+                    isPreviewingSection = true
+                )
+            }
+
+            sectionLimitJob = scope.launch(Dispatchers.Main) {
+                delay(durationMs)
+                if (isActive) {
+                    player.pause()
+                    _audioState.update {
+                        it.copy(
+                            isRenderedPlaying = false,
+                            isRenderedPaused = true,
+                            isPreviewingSection = false
+                        )
+                    }
+                }
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     private fun startPositionTicker() {
@@ -382,12 +545,13 @@ class AudioPlayer(
                     val vocalPos = vocalMediaPlayer?.takeIf { it.isPlaying }?.currentPosition?.toLong()
                     val beatPos = beatMediaPlayer?.takeIf { it.isPlaying }?.currentPosition?.toLong()
                     val rendPos = renderedMediaPlayer?.takeIf { it.isPlaying }?.currentPosition?.toLong()
+                    val unmasterPos = unmasteredMediaPlayer?.takeIf { it.isPlaying }?.currentPosition?.toLong()
 
                     _audioState.update { cur ->
                         cur.copy(
                             vocalPositionMs = vocalPos ?: cur.vocalPositionMs,
                             beatPositionMs = beatPos ?: cur.beatPositionMs,
-                            renderedPositionMs = rendPos ?: cur.renderedPositionMs
+                            renderedPositionMs = rendPos ?: unmasterPos ?: cur.renderedPositionMs
                         )
                     }
                 } catch (_: Exception) {}
@@ -398,11 +562,14 @@ class AudioPlayer(
 
     fun release() {
         positionTickerJob?.cancel()
+        sectionLimitJob?.cancel()
         try { vocalMediaPlayer?.release() } catch (_: Exception) {}
         try { beatMediaPlayer?.release() } catch (_: Exception) {}
         try { renderedMediaPlayer?.release() } catch (_: Exception) {}
+        try { unmasteredMediaPlayer?.release() } catch (_: Exception) {}
         vocalMediaPlayer = null
         beatMediaPlayer = null
         renderedMediaPlayer = null
+        unmasteredMediaPlayer = null
     }
 }

@@ -8,7 +8,10 @@ import com.autoremix.djslow.engine.arrangement.AutoArrangementPlan
 import com.autoremix.djslow.engine.arrangement.AutoArranger
 import com.autoremix.djslow.engine.arrangement.AutoDjPreset
 import com.autoremix.djslow.engine.arrangement.SectionEngines
+import com.autoremix.djslow.engine.dsp.LoudnessMeter
 import com.autoremix.djslow.engine.drum.DrumEngine
+import com.autoremix.djslow.engine.mastering.AutoMasteringEngine
+import com.autoremix.djslow.engine.mastering.MasteringPreset
 import com.autoremix.djslow.engine.melody.MelodyEngine
 import com.autoremix.djslow.engine.music.ChordEngine
 import com.autoremix.djslow.engine.music.MusicKey
@@ -32,30 +35,38 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Pipeline Audio Nyata Tahap 4 — ARRANGEMENT:
- * DRUM + MELODY + PAD + AUTO DJ ENERGY STRUCTURE ENGINE
+ * Pipeline Audio Studio Tahap 5 — KUALITAS AUDIO LENGKAP:
+ * MIX BUS, AUTO GAIN STAGING, VOCAL PROCESSING & DUCKING, KICK/BASS SEPARATION,
+ * DRUM & BASS PROCESSING, MUSIC BUS, STEREO ENGINE, AUTO MASTERING, LOUDNESS LUFS & ANTI CLIPPING.
  *
- * ALUR PIPELINE:
- * DECODE -> ANALISIS (BPM + Key + Energy + Beat Content) -> AUTO ARRANGER (Struktur, Kurva Energi, Pola)
- * -> SINTESIS CHORD PCM -> SINTESIS BASS PCM -> SINTESIS DRUM PCM -> SINTESIS MELODI PCM
- * -> SINTESIS PAD PCM -> FX TRANSISI -> KICK-BASS SIDECHAIN DUCKING -> MULTI-TRACK MIXING -> WAV RENDER -> VALIDASI
+ * ALUR LENGKAP:
+ * 1. Decode Vokal -> VocalProcessor (HPF 85Hz + EQ Presence + Kompresi + De-esser + Ambience)
+ * 2. Decode Beat
+ * 3. Timeline & Aransemen Struktur DJ
+ * 4. Sintesis Akor, Bass, Drum, Melodi, Pad, FX
+ * 5. DrumProcessor (EQ Kick punch/Snare crisp/Hi-hat smooth + Punch Comp + Limiter)
+ * 6. KickBassEngine (Sidechain Ducking) + BassProcessor (HPF 30Hz + EQ Dip 75Hz + Kompresi + Saturasi + Mono Sub)
+ * 7. VocalDucker (Smooth Ducking pada Music Bus: Akor, Melodi, Pad, FX)
+ * 8. Mix Bus Summing & Auto Gain Staging (Headroom pre-master -1.4 dBFS)
+ * 9. AutoMasteringEngine (Tonal EQ -> Glue Comp -> Saturasi -> Stereo Control -> Lookahead Limiter -> Peak Protection)
+ * 10. Render RIFF WAV 44.1 kHz 16-bit
+ * 11. Validasi Ketat (Peak, RMS, Silence, NaN, Infinity, Clipping, LUFS Integrated, True Peak)
  */
 object AudioMixPipeline {
 
     enum class PipelineStep(val label: String) {
-        PERSIAPAN("Mempersiapkan render"),
-        DECODE_VOKAL("Mendekode Vokal ke PCM"),
-        DECODE_BEAT("Mendekode Beat ke PCM"),
-        ANALISIS_DAN_STRUKTUR("Menganalisis Musik & Menyusun Struktur Lagu"),
-        SINTESIS_CHORD("Mensintesis Akor PCM"),
-        SINTESIS_BASS("Mensintesis Bass PCM"),
-        SINTESIS_DRUM("Mensintesis Drum Pola DJ Slow"),
-        SINTESIS_MELODI("Mensintesis Melodi Hook PCM"),
-        SINTESIS_PAD("Mensintesis Pad Atmosfir"),
-        PROSES_SIDECHAIN("Sinkronisasi Kick & Bass (Sidechain Ducking)"),
-        MIXING("Proses Multi-Track Mixing"),
-        RENDER_WAV("Merender berkas WAV 44.1 kHz"),
-        VALIDASI("Memvalidasi integritas berkas WAV"),
+        PERSIAPAN("Mempersiapkan render aransemen & mastering"),
+        DECODE_VOKAL("Mendekode Vokal ke PCM Float32"),
+        PROSES_VOKAL("Memproses Vokal (HPF, EQ, Kompresi, De-esser, Ambience)"),
+        DECODE_BEAT("Mendekode Trek Beat"),
+        ANALISIS_DAN_STRUKTUR("Menyusun Struktur Lagu & Kurva Energi"),
+        SINTESIS_INSTRUMEN("Mensintesis Akor, Melodi, Pad & FX"),
+        PROSES_DRUM_BASS("Memproses Drum & Sub-Bass (EQ, Sidechain, Punch)"),
+        DUCKING_VOKAL("Menerapkan Ducking Vokal Halus pada Bus Musik"),
+        MIXING("Multi-Bus Mixing & Auto Gain Staging"),
+        MASTERING("Auto Mastering Studio (Tonal EQ, Glue Comp, Saturation, Stereo, Limiter)"),
+        RENDER_WAV("Merender Berkas WAV 44.1 kHz 16-bit"),
+        VALIDASI("Memvalidasi Integritas WAV, Loudness LUFS & Anti-Clipping"),
         SELESAI("Selesai")
     }
 
@@ -82,7 +93,11 @@ object AudioMixPipeline {
         val timeline: MasterTimeline,
         val key: MusicKey,
         val targetBpm: Float,
-        val arrangementPlan: AutoArrangementPlan?
+        val arrangementPlan: AutoArrangementPlan?,
+        val loudnessReport: LoudnessMeter.LoudnessReport? = null,
+        val masteringPreset: MasteringPreset = MasteringPreset.DJ_SLOW,
+        val unmasteredWavFile: File? = null,
+        val unmasteredLufs: Float = -14.0f
     )
 
     /**
@@ -190,8 +205,7 @@ object AudioMixPipeline {
     }
 
     /**
-     * Menjalankan rendering lengkap aransemen Tahap 4:
-     * DECODE -> ARRANGE -> SYNTHESIZE ALL INSTRUMENTS -> MIX -> RENDER WAV -> VALIDATE
+     * Menjalankan rendering lengkap aransemen & mastering Tahap 5.
      */
     suspend fun run(
         context: Context,
@@ -202,6 +216,7 @@ object AudioMixPipeline {
         chordPreset: ChordSynthPreset = ChordSynthPreset.SOFT_PIANO,
         bassPattern: BassPatternType = BassPatternType.DJ_SLOW_BASS,
         preset: AutoDjPreset = AutoDjPreset.DJ_SLOW,
+        masteringPreset: MasteringPreset = MasteringPreset.DJ_SLOW,
         melodySeed: Long = 42L,
         params: MixEngine.MixParams = MixEngine.MixParams(),
         onProgress: (step: PipelineStep, progressFraction: Float, message: String) -> Unit
@@ -213,14 +228,14 @@ object AudioMixPipeline {
                 )
             }
 
-            onProgress(PipelineStep.PERSIAPAN, 0.04f, "Mempersiapkan pipeline aransemen audio...")
+            onProgress(PipelineStep.PERSIAPAN, 0.03f, "Mempersiapkan pipeline aransemen & mastering audio...")
 
             // 1. Decode Vokal
             var vocalPcm: AudioPcmData? = null
             if (vocalUri != null) {
-                onProgress(PipelineStep.DECODE_VOKAL, 0.08f, "Mendekode trek Vokal ke PCM Float32...")
+                onProgress(PipelineStep.DECODE_VOKAL, 0.06f, "Mendekode trek Vokal ke PCM Float32...")
                 val vResult = AudioPcmDecoder.decodeToPcm(context, vocalUri) { subProg, msg ->
-                    onProgress(PipelineStep.DECODE_VOKAL, 0.08f + 0.10f * subProg, "Vokal: $msg")
+                    onProgress(PipelineStep.DECODE_VOKAL, 0.06f + 0.08f * subProg, "Vokal: $msg")
                 }
                 if (vResult.isFailure) {
                     return@withContext Result.failure(
@@ -230,12 +245,18 @@ object AudioMixPipeline {
                 vocalPcm = vResult.getOrNull()
             }
 
-            // 2. Decode Beat
+            // 2. Pemrosesan Vokal Studio (Tahap 5)
+            if (vocalPcm != null && !vocalPcm.isSilent()) {
+                onProgress(PipelineStep.PROSES_VOKAL, 0.16f, "Memproses Vokal (HPF 85Hz, EQ Presence, Kompresi, De-esser, Ambience)...")
+                vocalPcm = VocalProcessor.process(vocalPcm)
+            }
+
+            // 3. Decode Beat
             var beatPcm: AudioPcmData? = null
             if (beatUri != null) {
-                onProgress(PipelineStep.DECODE_BEAT, 0.20f, "Mendekode trek Beat ke PCM Float32...")
+                onProgress(PipelineStep.DECODE_BEAT, 0.22f, "Mendekode trek Beat ke PCM Float32...")
                 val bResult = AudioPcmDecoder.decodeToPcm(context, beatUri) { subProg, msg ->
-                    onProgress(PipelineStep.DECODE_BEAT, 0.20f + 0.10f * subProg, "Beat: $msg")
+                    onProgress(PipelineStep.DECODE_BEAT, 0.22f + 0.08f * subProg, "Beat: $msg")
                 }
                 if (bResult.isFailure) {
                     return@withContext Result.failure(
@@ -245,7 +266,7 @@ object AudioMixPipeline {
                 beatPcm = bResult.getOrNull()
             }
 
-            // 3. Bangun Master Timeline, Progresi Akor & Aransemen Struktur Lagu
+            // 4. Bangun Master Timeline & Aransemen Struktur
             onProgress(PipelineStep.ANALISIS_DAN_STRUKTUR, 0.32f, "Menyusun struktur seksi lagu & kurva energi...")
             val maxAudioDurationMs = maxOf(vocalPcm?.durationMs ?: 0L, beatPcm?.durationMs ?: 0L, 8000L)
 
@@ -273,47 +294,20 @@ object AudioMixPipeline {
             val totalFrames = timeline.totalFrames
             val sampleRate = timeline.sampleRate
 
-            // 4. Sintesis Akor PCM
+            // 5. Sintesis Instrumen Pengiring
+            onProgress(PipelineStep.SINTESIS_INSTRUMEN, 0.40f, "Mensintesis Akor, Melodi, Pad, dan FX...")
+
             var chordPcm: AudioPcmData? = null
             if (params.chordSettings.volume > 0.0f && !params.chordSettings.isMuted) {
-                onProgress(PipelineStep.SINTESIS_CHORD, 0.40f, "Mensintesis Akor PCM (${chordPreset.label})...")
                 chordPcm = ChordSynthEngine.renderProgressionPcm(
                     timeline = timeline,
                     preset = chordPreset,
                     volume = params.chordSettings.volume
-                ) { subProg, msg ->
-                    onProgress(PipelineStep.SINTESIS_CHORD, 0.40f + 0.06f * subProg, msg)
-                }
-            }
-
-            // 5. Sintesis Bass PCM
-            var bassPcm: AudioPcmData? = null
-            if (params.bassSettings.volume > 0.0f && !params.bassSettings.isMuted) {
-                onProgress(PipelineStep.SINTESIS_BASS, 0.48f, "Mensintesis Bass PCM (${bassPattern.label})...")
-                bassPcm = BassEngine.renderBassPcm(
-                    timeline = timeline,
-                    bassEvents = bassEvents,
-                    volume = params.bassSettings.volume * preset.bassMultiplier
-                ) { subProg, msg ->
-                    onProgress(PipelineStep.SINTESIS_BASS, 0.48f + 0.06f * subProg, msg)
-                }
-            }
-
-            // 6. Sintesis Drum PCM
-            var drumPcm: AudioPcmData? = null
-            if (params.drumSettings.volume > 0.0f && !params.drumSettings.isMuted) {
-                onProgress(PipelineStep.SINTESIS_DRUM, 0.55f, "Mensintesis Drum Pola DJ Slow (Kick, Snare, Claps, Fills)...")
-                drumPcm = DrumEngine.renderDrums(
-                    events = arrangementPlan.drumEvents,
-                    totalSamples = totalFrames,
-                    sampleRate = sampleRate
                 )
             }
 
-            // 7. Sintesis Melodi Hook PCM
             var melodyPcm: AudioPcmData? = null
             if (params.melodySettings.volume > 0.0f && !params.melodySettings.isMuted) {
-                onProgress(PipelineStep.SINTESIS_MELODI, 0.62f, "Mensintesis Melodi Hook (Algorithmic Lead & Counter)...")
                 melodyPcm = MelodyEngine.renderMelody(
                     events = arrangementPlan.melodyEvents,
                     totalSamples = totalFrames,
@@ -321,10 +315,8 @@ object AudioMixPipeline {
                 )
             }
 
-            // 8. Sintesis Pad Atmosfir PCM
             var padPcm: AudioPcmData? = null
             if (params.padSettings.volume > 0.0f && !params.padSettings.isMuted) {
-                onProgress(PipelineStep.SINTESIS_PAD, 0.68f, "Mensintesis Pad Atmosfir Harmonis...")
                 padPcm = PadEngine.renderPad(
                     events = arrangementPlan.padEvents,
                     totalSamples = totalFrames,
@@ -332,26 +324,66 @@ object AudioMixPipeline {
                 )
             }
 
-            // 9. FX Transisi & Risers
-            onProgress(PipelineStep.PROSES_SIDECHAIN, 0.72f, "Menghasilkan FX Transisi & Risers...")
             val transitionPcm = SectionEngines.renderTransitions(
                 events = arrangementPlan.transitionEvents,
                 totalSamples = totalFrames,
                 sampleRate = sampleRate
             )
 
-            // 10. Terapkan Kick-Bass Sidechain Ducking
-            if (bassPcm != null && arrangementPlan.drumEvents.isNotEmpty()) {
-                onProgress(PipelineStep.PROSES_SIDECHAIN, 0.75f, "Menerapkan Sidechain Ducking (Kick & Sub-Bass)...")
-                bassPcm = com.autoremix.djslow.engine.mix.KickBassEngine.applySidechainDucking(
-                    bassPcm = bassPcm,
-                    drumEvents = arrangementPlan.drumEvents,
+            // 6. Sintesis & Pemrosesan Drum (DrumProcessor)
+            var drumPcm: AudioPcmData? = null
+            if (params.drumSettings.volume > 0.0f && !params.drumSettings.isMuted) {
+                onProgress(PipelineStep.PROSES_DRUM_BASS, 0.52f, "Memproses Drum Bus (EQ Punch, Snare Snap, Limiter)...")
+                val rawDrum = DrumEngine.renderDrums(
+                    events = arrangementPlan.drumEvents,
+                    totalSamples = totalFrames,
                     sampleRate = sampleRate
                 )
+                drumPcm = DrumProcessor.process(rawDrum)
             }
 
-            // 11. Multi-Track Mixing
-            onProgress(PipelineStep.MIXING, 0.78f, "Mixing multi-track dengan proteksi Headroom (-0.5 dB)...")
+            // 7. Sintesis & Pemrosesan Bass (Sidechain Ducking + BassProcessor)
+            var bassPcm: AudioPcmData? = null
+            if (params.bassSettings.volume > 0.0f && !params.bassSettings.isMuted) {
+                onProgress(PipelineStep.PROSES_DRUM_BASS, 0.58f, "Memproses Bass Bus (Sidechain Ducking, Sub EQ, Mono Bass)...")
+                val rawBass = BassEngine.renderBassPcm(
+                    timeline = timeline,
+                    bassEvents = bassEvents,
+                    volume = params.bassSettings.volume * preset.bassMultiplier
+                )
+
+                // a. Sidechain ducking dari ketukan kick drum
+                val sidechainedBass = if (arrangementPlan.drumEvents.isNotEmpty()) {
+                    KickBassEngine.applySidechainDucking(
+                        bassPcm = rawBass,
+                        drumEvents = arrangementPlan.drumEvents,
+                        sampleRate = sampleRate
+                    )
+                } else {
+                    rawBass
+                }
+
+                // b. BassProcessor: HPF 30Hz, Notch 75Hz (Kick separation), Kompresi, Saturasi hangat, Mono Sub
+                bassPcm = BassProcessor.process(sidechainedBass)
+            }
+
+            // 8. Ducking Vokal Halus pada Bus Musik (Akor, Melodi, Pad, FX)
+            if (vocalPcm != null && !vocalPcm.isSilent()) {
+                onProgress(PipelineStep.DUCKING_VOKAL, 0.64f, "Menerapkan Ducking Vokal Halus pada Bus Musik...")
+                val duckDepth = masteringPreset.vocalPocketDepthDb
+                if (chordPcm != null) {
+                    chordPcm = VocalDucker.applyVocalDucking(chordPcm, vocalPcm, duckingDepthDb = duckDepth)
+                }
+                if (melodyPcm != null) {
+                    melodyPcm = VocalDucker.applyVocalDucking(melodyPcm, vocalPcm, duckingDepthDb = duckDepth)
+                }
+                if (padPcm != null) {
+                    padPcm = VocalDucker.applyVocalDucking(padPcm, vocalPcm, duckingDepthDb = duckDepth)
+                }
+            }
+
+            // 9. Multi-Bus Mixing & Auto Gain Staging (Headroom pre-master -1.4 dBFS)
+            onProgress(PipelineStep.MIXING, 0.70f, "Mixing multi-bus & Auto Gain Staging...")
             val mixResult = MixEngine.mix(
                 vocalPcm = vocalPcm,
                 beatPcm = beatPcm,
@@ -363,7 +395,7 @@ object AudioMixPipeline {
                 transitionPcm = transitionPcm,
                 params = params
             ) { subProg, msg ->
-                onProgress(PipelineStep.MIXING, 0.78f + 0.08f * subProg, "Mix: $msg")
+                onProgress(PipelineStep.MIXING, 0.70f + 0.08f * subProg, "Mix: $msg")
             }
 
             if (mixResult.isFailure) {
@@ -371,30 +403,57 @@ object AudioMixPipeline {
                     IllegalStateException("Proses mixing gagal: ${mixResult.exceptionOrNull()?.message}")
                 )
             }
-            val mixedPcm = mixResult.getOrThrow()
+            val preMasterPcm = mixResult.getOrThrow()
 
-            // 12. Render ke Berkas WAV 44.1 kHz
+            // Analisis loudness pre-master untuk Loudness Matching pada A/B Preview
+            val preMasterReport = LoudnessMeter.analyze(preMasterPcm)
+
+            // Render WAV unmastered (pre-master mix) untuk perbandingan A/B instan
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val tempDir = com.autoremix.djslow.engine.temp.TempFileManager.getTempDir(context)
+            val unmasteredFile = File(tempDir, "TEMP_UNMASTERED_$timestamp.wav")
+            WavRenderer.render(preMasterPcm, unmasteredFile)
+
+            // 10. Auto Mastering Studio (Tahap 5)
+            onProgress(
+                PipelineStep.MASTERING,
+                0.80f,
+                "Auto Mastering (${masteringPreset.label}): Tonal EQ, Glue Comp, Saturation, Stereo, Limiter..."
+            )
+            val masterResult = AutoMasteringEngine.master(preMasterPcm, masteringPreset)
+            if (masterResult.isFailure) {
+                com.autoremix.djslow.engine.temp.TempFileManager.deleteSafe(unmasteredFile)
+                return@withContext Result.failure(
+                    IllegalStateException("Auto Mastering gagal: ${masterResult.exceptionOrNull()?.message}")
+                )
+            }
+            val masteredResult = masterResult.getOrThrow()
+            val finalMasterPcm = masteredResult.masteredPcm
+            val loudnessReport = masteredResult.report
+
+            // 11. Render ke Berkas WAV 44.1 kHz 16-bit
             val outputDir = File(context.filesDir, "rendered_wav").apply { mkdirs() }
             val outputFile = File(outputDir, "DJ_SLOW_MIX_$timestamp.wav")
 
-            onProgress(PipelineStep.RENDER_WAV, 0.88f, "Merender berkas audio WAV 44.1 kHz 16-bit...")
-            val renderResult = WavRenderer.render(mixedPcm, outputFile) { subProg, msg ->
-                onProgress(PipelineStep.RENDER_WAV, 0.88f + 0.07f * subProg, "WAV: $msg")
+            onProgress(PipelineStep.RENDER_WAV, 0.88f, "Merender berkas audio WAV 44.1 kHz 16-bit PCM...")
+            val renderResult = WavRenderer.render(finalMasterPcm, outputFile) { subProg, msg ->
+                onProgress(PipelineStep.RENDER_WAV, 0.88f + 0.06f * subProg, "WAV: $msg")
             }
 
             if (renderResult.isFailure) {
+                com.autoremix.djslow.engine.temp.TempFileManager.deleteSafe(unmasteredFile)
                 return@withContext Result.failure(
                     IllegalStateException(renderResult.exceptionOrNull()?.message ?: "Rendering gagal. Silakan ulangi.")
                 )
             }
             val wavFile = renderResult.getOrThrow()
 
-            // 13. Validasi Integritas WAV
-            onProgress(PipelineStep.VALIDASI, 0.96f, "Memvalidasi struktur RIFF WAV & audio non-silent...")
+            // 12. Validasi Integritas WAV, Loudness LUFS & Anti-Clipping
+            onProgress(PipelineStep.VALIDASI, 0.95f, "Memvalidasi WAV RIFF, LUFS (${loudnessReport.formattedLufs}), True Peak & Anti-Clipping...")
             val validation = WavValidator.validate(wavFile)
             if (!validation.isValid) {
                 if (wavFile.exists()) wavFile.delete()
+                com.autoremix.djslow.engine.temp.TempFileManager.deleteSafe(unmasteredFile)
                 val errMsg = validation.errorMessage ?: "Rendering gagal. Silakan ulangi."
                 return@withContext Result.failure(IllegalStateException(errMsg))
             }
@@ -402,7 +461,7 @@ object AudioMixPipeline {
             onProgress(
                 PipelineStep.SELESAI,
                 1.0f,
-                "Aransemen WAV berhasil & tervalidasi (${validation.durationMs / 1000} detik)."
+                "Master WAV berhasil & tervalidasi (${validation.durationMs / 1000}s, ${validation.formattedLufs}, ${validation.formattedTruePeak})."
             )
 
             return@withContext Result.success(
@@ -413,10 +472,18 @@ object AudioMixPipeline {
                     timeline = timeline,
                     key = musicKey,
                     targetBpm = targetBpm,
-                    arrangementPlan = arrangementPlan
+                    arrangementPlan = arrangementPlan,
+                    loudnessReport = loudnessReport,
+                    masteringPreset = masteringPreset,
+                    unmasteredWavFile = unmasteredFile,
+                    unmasteredLufs = preMasterReport.lufsIntegrated
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            com.autoremix.djslow.engine.temp.TempFileManager.cleanAllTempFiles(context)
+            throw e
         } catch (e: Exception) {
+            com.autoremix.djslow.engine.temp.TempFileManager.cleanAllTempFiles(context)
             return@withContext Result.failure(
                 IllegalStateException("Kesalahan eksekusi pipeline: ${e.localizedMessage ?: e.message}")
             )

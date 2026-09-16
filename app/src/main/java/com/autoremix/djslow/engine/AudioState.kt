@@ -46,6 +46,12 @@ data class AudioState(
     val renderedPositionMs: Long = 0L,
     val isRenderedPlaying: Boolean = false,
     val isRenderedPaused: Boolean = false,
+    val unmasteredWavPath: String? = null,
+    val isUnmasteredPlaying: Boolean = false,
+    val currentAbMode: com.autoremix.djslow.engine.preview.AbPreviewController.AbMode = com.autoremix.djslow.engine.preview.AbPreviewController.AbMode.MASTERED,
+    val isLoudnessMatchingEnabled: Boolean = false,
+    val loudnessGainFactor: Float = 1.0f,
+    val isPreviewingSection: Boolean = false,
     val errorMessage: String? = null
 ) {
     enum class ActiveTarget {
