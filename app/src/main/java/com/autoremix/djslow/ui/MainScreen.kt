@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -64,11 +65,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.PaddingValues
+import com.autoremix.djslow.guide.ContextualHelpTopic
+import com.autoremix.djslow.guide.GuideStep
+import com.autoremix.djslow.guide.RemixGuideManager
 import com.autoremix.djslow.logchat.LogChatScreen
+import com.autoremix.djslow.ui.components.ContextualFeatureGuideDialog
+import com.autoremix.djslow.ui.components.GuideBadgeButton
+import com.autoremix.djslow.ui.components.RemixInteractiveGuideModal
+import com.autoremix.djslow.ui.components.WelcomeGuideDialog
 import androidx.compose.ui.Alignment
 import com.autoremix.djslow.engine.structure.SongSection
 import com.autoremix.djslow.engine.structure.SongSectionType
@@ -127,6 +136,10 @@ fun MainScreen(
     }
 
     var showLogChat by remember { mutableStateOf(false) }
+    var showInteractiveGuide by remember { mutableStateOf(false) }
+    var activeGuideStep by remember { mutableIntStateOf(RemixGuideManager.getLastStep(context)) }
+    var activeContextualTopic by remember { mutableStateOf<ContextualHelpTopic?>(null) }
+    var showWelcomeGuide by remember { mutableStateOf(!RemixGuideManager.getDoNotShowStartup(context)) }
 
     if (showLogChat) {
         LogChatScreen(
@@ -213,6 +226,29 @@ fun MainScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            // Tombol 🎧 PANDUAN
+                            Button(
+                                onClick = {
+                                    activeGuideStep = RemixGuideManager.getLastGuideStep(context)
+                                    showInteractiveGuide = true
+                                },
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .testTag("open_guide_header_button"),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = NeonPink,
+                                    contentColor = Color.White
+                                )
+                            ) {
+                                Text(
+                                    text = "🎧 PANDUAN",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
                             // Tombol 🛠️ LOGCHAT
                             OutlinedButton(
                                 onClick = { showLogChat = true },
@@ -346,6 +382,71 @@ fun MainScreen(
                 }
             }
 
+            // Banner Interaktif Panduan Remix Musik
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("interactive_guide_banner_card")
+                    .border(1.dp, NeonPink.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+                colors = CardDefaults.cardColors(containerColor = StudioSurfaceElevated),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(NeonPink.copy(alpha = 0.25f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = "🎧", fontSize = 18.sp)
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "PANDUAN REMIX INTERAKTIF",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "13 langkah terpandu membuat remix DJ Slow nyata",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFFF80AB)
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            activeGuideStep = RemixGuideManager.getLastGuideStep(context)
+                            showInteractiveGuide = true
+                        },
+                        modifier = Modifier
+                            .height(36.dp)
+                            .testTag("banner_start_guide_button"),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NeonPink,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("BUKA", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                }
+            }
+
             // Error Banner
             AnimatedVisibility(visible = uiState.errorMessage != null) {
                 uiState.errorMessage?.let { errText ->
@@ -389,6 +490,24 @@ fun MainScreen(
                         }
                     }
                 }
+            }
+
+            // Header Bagian 1: Pilih Audio
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "1. PILIH AUDIO SUMBER (VOKAL & BEAT)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted
+                )
+                GuideBadgeButton(
+                    onClick = { activeContextualTopic = ContextualHelpTopic.AUDIO_SELECTION },
+                    testTag = "guide_button_audio_selection"
+                )
             }
 
             // 1. [ 🎤 PILIH VOKAL ]
@@ -472,12 +591,22 @@ fun MainScreen(
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
-                    Text(
-                        text = "KONTROL PEMUTARAN SUMBER NYATA",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = TextMuted
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "KONTROL PEMUTARAN SUMBER NYATA",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = TextMuted
+                        )
+                        GuideBadgeButton(
+                            onClick = { activeContextualTopic = ContextualHelpTopic.PREVIEW_PLAYER },
+                            testTag = "guide_button_preview_player"
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -633,6 +762,22 @@ fun MainScreen(
             // ==========================================
             // 3. [ 🔍 ANALISIS AUDIO NYATA ] (Tahap 3)
             // ==========================================
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "2. ANALISIS AUDIO NYATA",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted
+                )
+                GuideBadgeButton(
+                    onClick = { activeContextualTopic = ContextualHelpTopic.ANALYSIS },
+                    testTag = "guide_button_analysis"
+                )
+            }
             Button(
                 onClick = { viewModel.onAnalyzeTracks(context) },
                 enabled = uiState.hasAnyAudio && !uiState.isAnalyzing,
@@ -697,6 +842,22 @@ fun MainScreen(
             // ==========================================
             // MESIN MUSIK TAHAP 3 (BPM + KEY + CHORD + BASS)
             // ==========================================
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "3. MESIN MUSIK NYATA (BPM + KEY + CHORD)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted
+                )
+                GuideBadgeButton(
+                    onClick = { activeContextualTopic = ContextualHelpTopic.BPM_AND_TEMPO },
+                    testTag = "guide_button_bpm_tempo"
+                )
+            }
             MusicEngineCard(
                 uiState = uiState,
                 onBpmIncrement = { viewModel.onBpmIncrement() },
@@ -710,6 +871,22 @@ fun MainScreen(
             // ==========================================
             // MESIN ARANSEMEN TAHAP 4 (DRUM + MELODY + PAD + DJ STRUCTURE)
             // ==========================================
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "4. MESIN ARANSEMEN (STRUKTUR DJ SLOW)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted
+                )
+                GuideBadgeButton(
+                    onClick = { activeContextualTopic = ContextualHelpTopic.ARRANGEMENT_STRUCTURE },
+                    testTag = "guide_button_arrangement"
+                )
+            }
             ArrangementCard(
                 uiState = uiState,
                 onPresetChanged = { viewModel.onPresetChanged(it) },
@@ -719,6 +896,22 @@ fun MainScreen(
             // ==========================================
             // AUTO MASTERING & MIX BUS (TAHAP 5)
             // ==========================================
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "5. AUTO MASTERING & MIX BUS",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMuted
+                )
+                GuideBadgeButton(
+                    onClick = { activeContextualTopic = ContextualHelpTopic.RENDER_MASTER },
+                    testTag = "guide_button_mastering"
+                )
+            }
             MasteringCard(
                 uiState = uiState,
                 onMasteringPresetChanged = { viewModel.onMasteringPresetChanged(it) },
@@ -745,28 +938,38 @@ fun MainScreen(
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Tune,
-                            contentDescription = null,
-                            tint = NeonCyan,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = "🎚️ MIX ENGINE MULTI-TREK & MASTER BUS",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = NeonCyan,
+                                modifier = Modifier.size(24.dp)
                             )
-                            Text(
-                                text = "PCM Float32 (44.1 kHz) • Vokal, Beat, Drum, Bass, Akor, Melodi, Pad • Auto Mix",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextMuted
-                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "🎚️ MIX ENGINE MULTI-TREK & MASTER BUS",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "PCM Float32 (44.1 kHz) • Vokal, Beat, Drum, Bass, Akor, Melodi, Pad • Auto Mix",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextMuted
+                                )
+                            }
                         }
+                        GuideBadgeButton(
+                            onClick = { activeContextualTopic = ContextualHelpTopic.LAYERS_MIXER },
+                            testTag = "guide_button_mix_engine"
+                        )
                     }
 
                     // 1. Track Mixer: 🎤 VOKAL
@@ -1057,6 +1260,22 @@ fun MainScreen(
                 // ==========================================
                 // TAHAP 6 FINAL: EKSPOR MEDIASTORE WAV, MP3 & BAGIKAN
                 // ==========================================
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "6. EKSPOR & DISTRIBUSI AUDIO",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextMuted
+                    )
+                    GuideBadgeButton(
+                        onClick = { activeContextualTopic = ContextualHelpTopic.EXPORT_MEDIASTORE },
+                        testTag = "guide_button_export"
+                    )
+                }
                 ExportCard(
                     uiState = uiState,
                     onExportWav = { viewModel.exportWavToMediaStore(context) },
@@ -1165,6 +1384,136 @@ fun MainScreen(
                 }
             }
             } // Tutup blok else untuk Mode Studio
+
+            // Link Buka Panduan di Bagian Bawah
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = {
+                        activeGuideStep = RemixGuideManager.getLastGuideStep(context)
+                        showInteractiveGuide = true
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StudioSurfaceElevated,
+                        contentColor = NeonPink
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.testTag("bottom_open_guide_button")
+                ) {
+                    Text(text = "❓ BUKA PANDUAN REMIX INTERAKTIF (13 LANGKAH)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+
+    // Modal Panduan Selamat Datang (Onboarding Pertama Kali)
+    if (showWelcomeGuide) {
+        WelcomeGuideDialog(
+            onStartGuideClicked = {
+                showWelcomeGuide = false
+                activeGuideStep = 1
+                showInteractiveGuide = true
+            },
+            onDismissRequest = { dontShowAgain ->
+                showWelcomeGuide = false
+                if (dontShowAgain) {
+                    RemixGuideManager.setDoNotShowStartup(context, true)
+                }
+            }
+        )
+    }
+
+    // Modal Panduan Interaktif 13 Langkah
+    if (showInteractiveGuide) {
+        RemixInteractiveGuideModal(
+            uiState = uiState,
+            initialStep = activeGuideStep,
+            onDismissRequest = { showInteractiveGuide = false },
+            onStepActionClicked = { step ->
+                when (step) {
+                    GuideStep.STEP_01_PILIH_AUDIO -> {
+                        if (!uiState.isVocalSelected) {
+                            vocalPickerLauncher.launch("audio/*")
+                        } else if (!uiState.isBeatSelected) {
+                            beatPickerLauncher.launch("audio/*")
+                        } else {
+                            vocalPickerLauncher.launch("audio/*")
+                        }
+                    }
+                    GuideStep.STEP_02_ANALISIS_MUSIK -> {
+                        viewModel.onAnalyzeTracks(context)
+                    }
+                    GuideStep.STEP_03_PISAHKAN_VOCAL_BEAT -> {
+                        if (!uiState.isBeatSelected) {
+                            beatPickerLauncher.launch("audio/*")
+                        } else {
+                            vocalPickerLauncher.launch("audio/*")
+                        }
+                    }
+                    GuideStep.STEP_04_ATUR_BPM_PITCH -> {
+                        viewModel.onBpmIncrement()
+                        showInteractiveGuide = false
+                    }
+                    GuideStep.STEP_05_PILIH_GAYA_REMIX -> {
+                        if (!uiState.isQuickMode) {
+                            viewModel.onToggleQuickMode()
+                        }
+                        showInteractiveGuide = false
+                    }
+                    GuideStep.STEP_06_ATUR_STRUKTUR_REMIX -> {
+                        showInteractiveGuide = false
+                    }
+                    GuideStep.STEP_07_ATUR_MUSIK_LAYERS -> {
+                        showInteractiveGuide = false
+                    }
+                    GuideStep.STEP_08_ATUR_VOCAL -> {
+                        viewModel.onAutoMixToggle()
+                    }
+                    GuideStep.STEP_09_ATUR_FX_TRANSITION -> {
+                        showInteractiveGuide = false
+                    }
+                    GuideStep.STEP_10_PREVIEW_MONITOR -> {
+                        if (uiState.isPlaying) viewModel.onPause() else viewModel.onPlay()
+                    }
+                    GuideStep.STEP_11_RENDER_REMIX -> {
+                        if (uiState.isRendering) {
+                            viewModel.cancelRender(context)
+                        } else {
+                            viewModel.startMixAndRender(context)
+                        }
+                    }
+                    GuideStep.STEP_12_PUTAR_HASIL_REMIX -> {
+                        if (uiState.isRenderedPlaying) {
+                            viewModel.onPauseRendered()
+                        } else {
+                            viewModel.onPlayRendered()
+                        }
+                    }
+                    GuideStep.STEP_13_SIMPAN_EXPORT -> {
+                        viewModel.exportWavToMediaStore(context)
+                    }
+                }
+            }
+        )
+    }
+
+    // Modal Bantuan Kontekstual Fitur Tertentu
+    activeContextualTopic?.let { topic ->
+        ContextualFeatureGuideDialog(
+            topic = topic,
+            onDismissRequest = { activeContextualTopic = null },
+            onOpenFullGuideStep = { step ->
+                activeContextualTopic = null
+                activeGuideStep = step.stepNumber
+                showInteractiveGuide = true
+            }
+        )
+    }
         }
     }
 }
