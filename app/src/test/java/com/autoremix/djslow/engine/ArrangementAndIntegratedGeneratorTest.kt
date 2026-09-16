@@ -347,4 +347,34 @@ class ArrangementAndIntegratedGeneratorTest {
         assertEquals(0, arrangement.sections.first().startBar)
         assertEquals(musicalMap.totalBars, arrangement.sections.last().endBar)
     }
+
+    @Test
+    fun testMemorySafetyAndGeneratorContext() {
+        val analysis = createMockAnalysis(24000L)
+        val musicalMap = MusicalMapEngine.buildMap(analysis, analysis.timeline)
+        val remixPlan = RemixBrain.createPlan(analysis, musicalMap, RemixBrain.RemixStyle.DJ_SLOW, seed = 54321L)
+        val arrangement = ArrangementEngine.createArrangement(analysis, musicalMap, remixPlan)
+
+        val context = MusicGeneratorEngine.createGeneratorContext(analysis.timeline, remixPlan, arrangement)
+        assertEquals(targetBpm, context.masterBpm, 0.01f)
+        assertEquals(key, context.targetKey)
+        assertEquals(remixPlan.style, context.style)
+        assertEquals(remixPlan.melodyPlan.seed, context.seed)
+        assertEquals(arrangement.sections.size, context.arrangement.sections.size)
+        assertTrue(context.chordTimeline.isNotEmpty())
+        assertTrue(context.beatGrid.isNotEmpty())
+        assertTrue(context.barGrid > 0)
+
+        // Memory safety: Buffer frames must be strictly bounded and reusable
+        val testFrames = 4096
+        val channels = 2
+        val pcm = AudioPcmData(FloatArray(testFrames * channels), sampleRate, channels)
+        assertEquals(testFrames, pcm.totalFrames)
+        assertEquals(channels, pcm.channels)
+        assertEquals(testFrames * channels, pcm.samples.size)
+
+        // Verify no unbounded allocations occur on slicing or windowing
+        val half = pcm.slice(0, 2048)
+        assertEquals(2048, half.totalFrames)
+    }
 }

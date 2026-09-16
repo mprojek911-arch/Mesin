@@ -14,6 +14,9 @@ import com.autoremix.djslow.engine.synth.ChordSynthEngine
 import com.autoremix.djslow.engine.timeline.MasterTimeline
 import com.autoremix.djslow.engine.arrangement.SectionEngines
 import com.autoremix.djslow.engine.arrangement.TransitionFxEvent
+import com.autoremix.djslow.engine.music.MusicKey
+import com.autoremix.djslow.engine.timeline.BeatGridPoint
+import com.autoremix.djslow.engine.timeline.TimelineEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -31,6 +34,22 @@ import kotlinx.coroutines.withContext
  */
 object MusicGeneratorEngine {
 
+    /**
+     * Konteks parameter terpadu Master Musical Clock (Fase 3 - Bagian C).
+     * Seluruh generator instrumen wajib merujuk pada parameter tersinkronisasi ini.
+     */
+    data class GeneratorContext(
+        val masterBpm: Float,
+        val targetKey: MusicKey,
+        val beatGrid: List<BeatGridPoint>,
+        val barGrid: Int,
+        val chordTimeline: List<TimelineEvent.ChordEvent>,
+        val arrangement: ArrangementEngine.FullArrangement,
+        val energyCurve: EnergyCurve,
+        val style: RemixBrain.RemixStyle,
+        val seed: Long
+    )
+
     data class GeneratedMusic(
         val drumPcm: AudioPcmData,
         val bassPcm: AudioPcmData,
@@ -43,6 +62,29 @@ object MusicGeneratorEngine {
         val melodyEvents: List<MelodyEvent>,
         val transitionEvents: List<TransitionFxEvent>
     )
+
+    /**
+     * Membuat GeneratorContext dari timeline, remixPlan, dan arrangement.
+     */
+    fun createGeneratorContext(
+        timeline: MasterTimeline,
+        remixPlan: RemixBrain.RemixPlan,
+        arrangement: ArrangementEngine.FullArrangement
+    ): GeneratorContext {
+        val sections = arrangement.sections.map { it.toSongSection() }
+        val energyCurve = EnergyCurve(sections, timeline.totalFrames)
+        return GeneratorContext(
+            masterBpm = remixPlan.targetBpm,
+            targetKey = remixPlan.targetKey,
+            beatGrid = timeline.beatGrid,
+            barGrid = timeline.totalBars,
+            chordTimeline = timeline.chordEvents,
+            arrangement = arrangement,
+            energyCurve = energyCurve,
+            style = remixPlan.style,
+            seed = remixPlan.melodyPlan.seed
+        )
+    }
 
     /**
      * Menghasilkan seluruh instrumen musik secara serempak di Master Clock.

@@ -95,26 +95,66 @@ object ArrangementEngine {
 
         val arrangedSections = ArrayList<ArrangedSection>()
 
-        if (totalBars <= 12) {
-            // Lagu Pendek (misal 15-30 detik): INTRO (2 bar) -> PRE-DROP (2 bar) -> DROP (6 bar) -> OUTRO (2 bar)
-            val introEnd = minOf(2, totalBars / 4)
-            val preDropEnd = minOf(introEnd + 2, totalBars / 2)
-            val dropEnd = minOf(preDropEnd + 6, totalBars - 2)
+        if (totalBars <= 8) {
+            // Lagu Sangat Pendek (misal 8-20 detik): INTRO -> PRE-DROP -> DROP -> OUTRO
+            var cur = 0
+            val bIntro = if (totalBars >= 4) 1 else 0
+            val bPreDrop = if (totalBars >= 3) 1 else 0
+            val bOutro = if (totalBars >= 5) 1 else 0
+            val bDrop = maxOf(1, totalBars - bIntro - bPreDrop - bOutro)
 
-            addSection(arrangedSections, SongSectionType.INTRO, 0, introEnd, samplesPerBar, remixPlan, 0.25f,
+            if (bIntro > 0) {
+                addSection(arrangedSections, SongSectionType.INTRO, cur, cur + bIntro, samplesPerBar, remixPlan, 0.25f,
+                    VocalMode.FULL, DrumMode.SILENT, BassMode.SUB_DRONE, ChordMode.SOFT_WARM, MelodyMode.OFF, PadMode.AIRY_BACKGROUND, FxMode.NONE)
+                cur += bIntro
+            }
+
+            if (bPreDrop > 0 && cur < totalBars) {
+                addSection(arrangedSections, SongSectionType.PRE_DROP, cur, cur + bPreDrop, samplesPerBar, remixPlan, 0.65f,
+                    VocalMode.CHOP_PRE_DROP, DrumMode.BUILD_SNARE_ROLL, BassMode.OFF, ChordMode.RHYTHMIC_STABS, MelodyMode.TEASER, PadMode.DRAMATIC_SWELL, FxMode.RISER_SWEEP)
+                cur += bPreDrop
+            }
+
+            val eDrop = if (bOutro > 0 && cur + bDrop < totalBars) cur + bDrop else totalBars
+            if (cur < eDrop) {
+                addSection(arrangedSections, SongSectionType.DROP, cur, eDrop, samplesPerBar, remixPlan, 0.95f,
+                    VocalMode.FULL, DrumMode.FULL_GROOVE, BassMode.FULL_PUNCH, ChordMode.FULL_SWEEP, MelodyMode.FULL_HOOK, PadMode.WIDE_WARM, FxMode.IMPACT_DROP)
+                cur = eDrop
+            }
+
+            if (cur < totalBars) {
+                addSection(arrangedSections, SongSectionType.OUTRO, cur, totalBars, samplesPerBar, remixPlan, 0.30f,
+                    VocalMode.REVERB_TAIL, DrumMode.KICK_ONLY, BassMode.SUB_DRONE, ChordMode.SOFT_WARM, MelodyMode.OFF, PadMode.AIRY_BACKGROUND, FxMode.REVERB_OUTRO)
+            }
+
+        } else if (totalBars <= 16) {
+            // Lagu Pendek (misal 20-40 detik): INTRO (2 bar) -> PRE-DROP (2 bar) -> DROP (6-8 bar) -> OUTRO (2 bar)
+            var cur = 0
+            val bIntro = maxOf(1, totalBars / 5)
+            val bPreDrop = 2
+            val bOutro = maxOf(1, totalBars / 6)
+            val bDrop = maxOf(2, totalBars - bIntro - bPreDrop - bOutro)
+
+            addSection(arrangedSections, SongSectionType.INTRO, cur, cur + bIntro, samplesPerBar, remixPlan, 0.25f,
                 VocalMode.FULL, DrumMode.SILENT, BassMode.SUB_DRONE, ChordMode.SOFT_WARM, MelodyMode.OFF, PadMode.AIRY_BACKGROUND, FxMode.NONE)
+            cur += bIntro
 
-            addSection(arrangedSections, SongSectionType.PRE_DROP, introEnd, preDropEnd, samplesPerBar, remixPlan, 0.65f,
+            addSection(arrangedSections, SongSectionType.PRE_DROP, cur, cur + bPreDrop, samplesPerBar, remixPlan, 0.65f,
                 VocalMode.CHOP_PRE_DROP, DrumMode.BUILD_SNARE_ROLL, BassMode.OFF, ChordMode.RHYTHMIC_STABS, MelodyMode.TEASER, PadMode.DRAMATIC_SWELL, FxMode.RISER_SWEEP)
+            cur += bPreDrop
 
-            addSection(arrangedSections, SongSectionType.DROP, preDropEnd, dropEnd, samplesPerBar, remixPlan, 0.95f,
+            val eDrop = cur + bDrop
+            addSection(arrangedSections, SongSectionType.DROP, cur, eDrop, samplesPerBar, remixPlan, 0.95f,
                 VocalMode.FULL, DrumMode.FULL_GROOVE, BassMode.FULL_PUNCH, ChordMode.FULL_SWEEP, MelodyMode.FULL_HOOK, PadMode.WIDE_WARM, FxMode.IMPACT_DROP)
+            cur = eDrop
 
-            addSection(arrangedSections, SongSectionType.OUTRO, dropEnd, totalBars, samplesPerBar, remixPlan, 0.30f,
-                VocalMode.REVERB_TAIL, DrumMode.KICK_ONLY, BassMode.SUB_DRONE, ChordMode.SOFT_WARM, MelodyMode.OFF, PadMode.AIRY_BACKGROUND, FxMode.REVERB_OUTRO)
+            if (cur < totalBars) {
+                addSection(arrangedSections, SongSectionType.OUTRO, cur, totalBars, samplesPerBar, remixPlan, 0.30f,
+                    VocalMode.REVERB_TAIL, DrumMode.KICK_ONLY, BassMode.SUB_DRONE, ChordMode.SOFT_WARM, MelodyMode.OFF, PadMode.AIRY_BACKGROUND, FxMode.REVERB_OUTRO)
+            }
 
         } else if (totalBars <= 24) {
-            // Lagu Sedang (misal 45-60 detik): INTRO (4 bar) -> BUILD (4 bar) -> PRE-DROP (2 bar) -> DROP (8 bar) -> BREAK (2 bar) -> OUTRO (4 bar)
+            // Lagu Sedang (misal 45-60 detik): INTRO -> BUILD -> PRE-DROP -> DROP -> BREAK -> OUTRO
             var cur = 0
             val introBars = minOf(4, totalBars / 6)
             addSection(arrangedSections, SongSectionType.INTRO, cur, cur + introBars, samplesPerBar, remixPlan, 0.25f,
@@ -170,7 +210,7 @@ object ArrangementEngine {
                 VocalMode.CHOP_PRE_DROP, DrumMode.BUILD_SNARE_ROLL, BassMode.OFF, ChordMode.RHYTHMIC_STABS, MelodyMode.OFF, PadMode.DRAMATIC_SWELL, FxMode.TENSION_PAUSE)
             cur = ePreDrop
 
-            // 4. DROP 1
+            // 4. DROP
             val eDrop = minOf(cur + bDrop, totalBars)
             addSection(arrangedSections, SongSectionType.DROP, cur, eDrop, samplesPerBar, remixPlan, 0.95f,
                 VocalMode.FULL, DrumMode.FULL_GROOVE, BassMode.FULL_PUNCH, ChordMode.FULL_SWEEP, MelodyMode.FULL_HOOK, PadMode.WIDE_WARM, FxMode.IMPACT_DROP)
@@ -192,7 +232,7 @@ object ArrangementEngine {
                 cur = eBuild2
             }
 
-            // 7. MAIN DROP (DROP 2)
+            // 7. DROP 2 (MAIN DROP)
             if (cur < totalBars) {
                 val eDrop2 = minOf(cur + bDrop2, totalBars - 2)
                 addSection(arrangedSections, SongSectionType.MAIN_DROP, cur, eDrop2, samplesPerBar, remixPlan, 1.0f,

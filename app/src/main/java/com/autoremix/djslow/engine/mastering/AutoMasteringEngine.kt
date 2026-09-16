@@ -29,9 +29,10 @@ object AutoMasteringEngine {
 
     fun master(
         inputPcm: AudioPcmData,
-        preset: MasteringPreset = MasteringPreset.DJ_SLOW
+        preset: MasteringPreset = MasteringPreset.DJ_SLOW,
+        inPlace: Boolean = false
     ): Result<MasteringResult> {
-        val samples = inputPcm.samples.copyOf()
+        val samples = if (inPlace) inputPcm.samples else inputPcm.samples.copyOf()
         val sampleRate = inputPcm.sampleRate
         val channels = inputPcm.channels
 

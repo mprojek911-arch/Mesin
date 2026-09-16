@@ -160,4 +160,51 @@ class MasteringAndMixBusTest {
         assertFalse("Mixed audio should not be silent (vocal still active)", mixed.isSilent())
         assertTrue("Peak amplitude should be within safe headroom", mixed.calculatePeak() <= 0.95f)
     }
+
+    @Test
+    fun testMasterEngine_masterAudioFullPipeline() {
+        val testMusic = generateSineWave(440.0f, 1.0f, 0.9f)
+        val masterResult = kotlinx.coroutines.runBlocking {
+            com.autoremix.djslow.engine.core.MasterEngine.masterAudio(
+                inputPcm = testMusic,
+                preset = MasteringPreset.DJ_SLOW,
+                inPlace = false
+            )
+        }
+
+        assertTrue("MasterEngine audio mastering must succeed", masterResult.isSuccess)
+        val output = masterResult.getOrThrow()
+        assertNotNull("Mastered PCM must not be null", output.pcmData)
+        assertFalse("Mastered PCM must not be silent", output.pcmData.isSilent())
+        assertFalse("Mastered PCM must not have NaN/Inf values", output.pcmData.hasInvalidValues())
+        assertTrue("Mastered True Peak should be <= -0.2 dBTP", output.loudnessReport.truePeakDbtp <= -0.2f)
+        assertFalse("Output must not flag clipping", output.loudnessReport.isClipping)
+        assertTrue("Mastered LUFS should be within reasonable range", output.loudnessReport.lufsIntegrated in -24.0f..-8.0f)
+    }
+
+    @Test
+    fun testMasterEngine_inPlaceProcessingSavesAllocation() {
+        val testMusic = generateSineWave(220.0f, 0.5f, 0.8f)
+        val initialFirstSample = testMusic.samples[0]
+        val masterResult = kotlinx.coroutines.runBlocking {
+            com.autoremix.djslow.engine.core.MasterEngine.masterAudio(
+                inputPcm = testMusic,
+                preset = MasteringPreset.BASS_STRONG,
+                inPlace = true
+            )
+        }
+
+        assertTrue("In-place mastering must succeed", masterResult.isSuccess)
+        val output = masterResult.getOrThrow()
+        assertEquals(testMusic.samples.size, output.pcmData.samples.size)
+        assertTrue("Mastered peak should stay within digital limits", output.pcmData.calculatePeak() <= 0.96f)
+    }
+
+    @Test
+    fun testOutputEngine_memoryStatusCheck() {
+        val memStatus = com.autoremix.djslow.engine.core.OutputEngine.getMemoryStatus()
+        assertNotNull(memStatus)
+        assertTrue("Total max memory must be positive", memStatus.maxMb > 0)
+        assertTrue("Used memory must be non-negative", memStatus.usedMb >= 0)
+    }
 }

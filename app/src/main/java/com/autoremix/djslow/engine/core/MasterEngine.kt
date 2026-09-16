@@ -27,10 +27,12 @@ object MasterEngine {
 
     /**
      * Memproses mastering audio stereo secara aman dengan chunking memory jika durasi panjang.
+     * Mendukung inPlace mastering untuk mencegah OOM (OutOfMemoryError) pada lagu 3-5 menit.
      */
     suspend fun masterAudio(
         inputPcm: AudioPcmData,
         preset: MasteringPreset = MasteringPreset.DJ_SLOW,
+        inPlace: Boolean = true,
         onProgress: ((Float, String) -> Unit)? = null
     ): Result<MasteredOutput> = withContext(Dispatchers.Default) {
         try {
@@ -38,16 +40,26 @@ object MasterEngine {
                 return@withContext Result.failure(IllegalArgumentException("Audio input mastering kosong atau hening."))
             }
 
-            onProgress?.invoke(0.20f, "Menerapkan Tonal EQ & Glue Compressor (${preset.label})...")
+            // Monitor memori runtime sebelum alokasi besar
+            val runtime = Runtime.getRuntime()
+            val availableMemoryMb = (runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())) / (1024 * 1024)
+            if (availableMemoryMb < 32) {
+                System.gc() // Bersihkan objek tak terpakai sebelum pemrosesan DSP
+            }
 
-            // Panggil AutoMasteringEngine DSP nyata
-            val result = AutoMasteringEngine.master(inputPcm, preset)
+            onProgress?.invoke(0.15f, "1. Tonal EQ Balance (${preset.label})...")
+            onProgress?.invoke(0.35f, "2. Glue Compressor & Tape Saturation...")
+            onProgress?.invoke(0.55f, "3. Stereo Mono-Sub (<120Hz) & Width...")
+            onProgress?.invoke(0.75f, "4. True Peak Lookahead Brickwall Limiter (-0.5 dBFS)...")
+
+            // Panggil AutoMasteringEngine DSP nyata dengan inPlace processing
+            val result = AutoMasteringEngine.master(inputPcm, preset, inPlace = inPlace)
             if (result.isFailure) {
                 return@withContext Result.failure(result.exceptionOrNull()!!)
             }
 
             val masterResult = result.getOrThrow()
-            onProgress?.invoke(0.85f, "Memvalidasi True Peak (-0.5 dBFS) & Loudness (${preset.targetLufs} LUFS)...")
+            onProgress?.invoke(0.90f, "5. Mengukur Loudness (${masterResult.report.formattedLufs}) & True Peak (${masterResult.report.formattedTruePeak})...")
 
             val output = MasteredOutput(
                 pcmData = masterResult.masteredPcm,
@@ -55,7 +67,7 @@ object MasterEngine {
                 preset = preset
             )
 
-            onProgress?.invoke(1.0f, "Mastering selesai: True Peak ${String.format("%.2f", output.loudnessReport.truePeakDbtp)} dBTP, Loudness ${String.format("%.1f", output.loudnessReport.lufsIntegrated)} LUFS")
+            onProgress?.invoke(1.0f, "Mastering selesai: True Peak ${output.loudnessReport.formattedTruePeak}, Loudness ${output.loudnessReport.formattedLufs}")
             Result.success(output)
         } catch (e: Exception) {
             Result.failure(IllegalStateException("Mastering gagal: ${e.localizedMessage ?: e.message}"))

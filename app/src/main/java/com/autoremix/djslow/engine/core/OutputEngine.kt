@@ -26,17 +26,19 @@ import java.util.Locale
 object OutputEngine {
 
     enum class OutputStatus(val label: String) {
-        IDLE("Siap"),
-        ANALYZING("1/6 Menganalisis Audio..."),
-        PLANNING("2/6 Menyusun Rencana Remix Brain..."),
-        GENERATING("3/6 Menyintesis Instrumen & Track..."),
-        MIXING("4/6 Intelligent Multi-Bus Mixing..."),
-        MASTERING("5/6 Auto Mastering & True Peak Protection..."),
-        RENDERING("6/6 Merender Audio Nyata (WAV)..."),
-        VALIDATING("Memvalidasi Integritas Audio..."),
-        READY("Selesai & Siap Diputar"),
-        ERROR("Gagal"),
-        CANCELLED("Dibatalkan")
+        IDLE("SIAP"),
+        ANALYZING("MENGANALISIS..."),
+        PLANNING("MERENCANAKAN REMIX..."),
+        ARRANGING("MEMBUAT ARANSEMEN..."),
+        GENERATING("MEMBUAT MUSIK..."),
+        VOCAL_PROCESSING("MEMPROSES VOKAL..."),
+        MIXING("MIXING..."),
+        MASTERING("MASTERING..."),
+        RENDERING("RENDERING..."),
+        VALIDATING("MEMVALIDASI..."),
+        READY("SIAP."),
+        ERROR("GAGAL"),
+        CANCELLED("DIBATALKAN")
     }
 
     /**
@@ -149,5 +151,60 @@ object OutputEngine {
     fun createTempWavFile(context: Context, prefix: String = "Master_Remix"): File {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         return File(context.cacheDir, "${prefix}_${timeStamp}.wav")
+    }
+
+    /**
+     * Memvalidasi berkas audio WAV master atau preview secara ketat.
+     */
+    fun validateOutputFile(file: File): WavValidator.ValidationResult {
+        return WavValidator.validate(file)
+    }
+
+    /**
+     * Membersihkan berkas temporary WAV lama di cache directory agar penyimpanan hemat dan bersih.
+     */
+    fun cleanupTempFiles(context: Context, maxAgeHours: Long = 2): Int {
+        var deletedCount = 0
+        try {
+            val cacheDir = context.cacheDir ?: return 0
+            val cutoff = System.currentTimeMillis() - (maxAgeHours * 3600 * 1000)
+            val tempFiles = cacheDir.listFiles { file ->
+                file.isFile && (file.name.endsWith(".wav") || file.name.endsWith(".mp3") || file.name.endsWith(".tmp"))
+            } ?: emptyArray()
+
+            for (file in tempFiles) {
+                if (file.lastModified() < cutoff) {
+                    if (file.delete()) {
+                        deletedCount++
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return deletedCount
+    }
+
+    data class MemoryStatus(
+        val usedMb: Long,
+        val freeMb: Long,
+        val maxMb: Long,
+        val isSafeForMastering: Boolean
+    )
+
+    /**
+     * Memonitor ketersediaan memori JVM untuk memastikan rendering aman dari OutOfMemoryError.
+     */
+    fun getMemoryStatus(): MemoryStatus {
+        val runtime = Runtime.getRuntime()
+        val totalMem = runtime.totalMemory() / (1024 * 1024)
+        val freeMem = runtime.freeMemory() / (1024 * 1024)
+        val maxMem = runtime.maxMemory() / (1024 * 1024)
+        val usedMem = totalMem - freeMem
+        val isSafe = (maxMem - usedMem) > 48
+        return MemoryStatus(
+            usedMb = usedMem,
+            freeMb = freeMem,
+            maxMb = maxMem,
+            isSafeForMastering = isSafe
+        )
     }
 }

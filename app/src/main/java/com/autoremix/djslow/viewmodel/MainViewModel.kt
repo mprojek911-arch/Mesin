@@ -864,6 +864,7 @@ class MainViewModel : ViewModel() {
                     _songSections.value = workflowResult.arrangement.sections.map { it.toSongSection() }
                     _renderedWavFile.value = workflowResult.masterWavFile
                     _outputStatus.value = com.autoremix.djslow.engine.core.OutputEngine.OutputStatus.READY
+                    _loudnessReport.value = workflowResult.loudnessReport
 
                     val valRes = WavValidator.validate(workflowResult.masterWavFile)
                     _validationResult.value = valRes
@@ -937,6 +938,7 @@ class MainViewModel : ViewModel() {
                         _renderedWavFile.value = pFile
                         val valRes = WavValidator.validate(pFile)
                         _validationResult.value = valRes
+                        _loudnessReport.value = workflowResult.loudnessReport
                         audioPlayer.setRenderedWav(pFile)
                         _statusMessage.value = "PRATINJAU 30 DETIK SIAP DIPUTAR (Build & Drop)!"
                     }

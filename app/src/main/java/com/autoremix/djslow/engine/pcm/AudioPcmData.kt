@@ -78,6 +78,19 @@ data class AudioPcmData(
         return AudioPcmData(newSamples, sampleRate, channels)
     }
 
+    /**
+     * Memotong potongan frame (chunk slicing) untuk streaming dan pemrosesan audio hemat memori.
+     */
+    fun slice(startFrame: Int, frameCount: Int): AudioPcmData {
+        val safeStart = startFrame.coerceIn(0, totalFrames)
+        val safeCount = frameCount.coerceIn(0, totalFrames - safeStart)
+        val startSample = safeStart * channels
+        val sampleCount = safeCount * channels
+        val sub = FloatArray(sampleCount)
+        System.arraycopy(samples, startSample, sub, 0, sampleCount)
+        return AudioPcmData(sub, sampleRate, channels)
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false

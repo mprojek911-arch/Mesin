@@ -46,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -392,6 +393,64 @@ fun QuickModeCard(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TextMuted
                             )
+                        }
+                    }
+
+                    // Banner Khusus Pratinjau 30 Detik (Intro -> Build -> Pre-Drop -> Drop)
+                    val is30sPreview = uiState.preview30sFile != null && uiState.renderedWavFile == uiState.preview30sFile
+                    if (is30sPreview) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = NeonCyan.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.4f))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "⚡ PRATINJAU 30 DETIK (Intro → Build → Pre-Drop → Drop)",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NeonCyan
+                                )
+                                Text(
+                                    text = "Jika puas: tekan RENDER FULL untuk menghasilkan seluruh lagu.\nJika tidak: tekan BUAT VERSI LAIN untuk variasi aransemen baru.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = { viewModel.onAutoRemix(context) },
+                                        modifier = Modifier
+                                            .weight(1.2f)
+                                            .height(40.dp)
+                                            .testTag("quick_preview_render_full_button"),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = NeonPink, contentColor = Color.White)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.FastForward, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("RENDER FULL", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    Button(
+                                        onClick = { viewModel.onRegenerateVersion(context) },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(40.dp)
+                                            .testTag("quick_preview_regen_button"),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = StudioSurfaceElevated, contentColor = NeonAmber)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("VERSI LAIN", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
 
