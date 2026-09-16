@@ -135,7 +135,7 @@ class MainViewModel : ViewModel() {
     private val _exportSuccessMessage = MutableStateFlow<String?>(null)
 
     // Intelligent Remix Engine (Arsitektur 10 Mesin Inti)
-    private val _isQuickMode = MutableStateFlow(true)
+    private val _isQuickMode = MutableStateFlow(false)
     private val _remixStyle = MutableStateFlow(com.autoremix.djslow.engine.core.RemixBrain.RemixStyle.DJ_SLOW)
     private val _energyPreference = MutableStateFlow(com.autoremix.djslow.engine.core.RemixBrain.EnergyPreference.MEDIUM)
     private val _focusPreference = MutableStateFlow(com.autoremix.djslow.engine.core.RemixBrain.FocusPreference.BALANCED)

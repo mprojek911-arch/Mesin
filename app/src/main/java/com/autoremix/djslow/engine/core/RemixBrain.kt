@@ -35,9 +35,6 @@ object RemixBrain {
         val masteringPreset: MasteringPreset,
         val legacyPreset: AutoDjPreset
     ) {
-        val recommendedBpmRange: IntRange
-            get() = minBpm.toInt()..maxBpm.toInt()
-
         DJ_SLOW(
             label = "DJ SLOW",
             description = "Gaya remix santai, tempo 80 BPM, bass empuk & ketukan berbobot",
