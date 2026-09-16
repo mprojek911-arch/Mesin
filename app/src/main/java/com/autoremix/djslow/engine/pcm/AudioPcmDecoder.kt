@@ -78,9 +78,9 @@ object AudioPcmDecoder {
             codec.configure(trackFormat, null, null, 0)
             codec.start()
 
-            val decodedRawPcmBytes = decodeLoop(extractor, codec, durationUs, onProgress)
+            val decodedChunks = decodeChunks(extractor, codec, durationUs, onProgress)
 
-            if (decodedRawPcmBytes.isEmpty()) {
+            if (decodedChunks.totalBytes == 0) {
                 return Result.failure(IllegalStateException("Gagal mengekstrak sampel audio (data kosong)."))
             }
 
@@ -97,8 +97,9 @@ object AudioPcmDecoder {
 
             onProgress?.invoke(0.80f, "Mengonversi ke PCM Float32 stereo 44.1 kHz...")
 
-            val pcmData = convertRawPcmToFloat32Stereo(
-                rawBytes = decodedRawPcmBytes,
+            val pcmData = convertChunksToFloat32Stereo(
+                chunks = decodedChunks.chunks,
+                totalBytes = decodedChunks.totalBytes,
                 sourceSampleRate = sourceSampleRate,
                 sourceChannels = sourceChannels,
                 targetSampleRate = TARGET_SAMPLE_RATE
@@ -129,18 +130,22 @@ object AudioPcmDecoder {
         return -1
     }
 
-    private fun decodeLoop(
+    data class DecodedChunks(
+        val chunks: List<ByteArray>,
+        val totalBytes: Int
+    )
+
+    private fun decodeChunks(
         extractor: MediaExtractor,
         codec: MediaCodec,
         durationUs: Long,
         onProgress: ((Float, String) -> Unit)?
-    ): ByteArray {
+    ): DecodedChunks {
         val kTimeoutUs = 5000L
         val info = MediaCodec.BufferInfo()
         var isExtractorEos = false
         var isDecoderEos = false
 
-        // Menggunakan ByteArray dinamis berkapasitas besar
         val outputChunkList = ArrayList<ByteArray>(64)
         var totalBytesDecoded = 0
 
@@ -190,13 +195,81 @@ object AudioPcmDecoder {
             }
         }
 
-        val allBytes = ByteArray(totalBytesDecoded)
+        return DecodedChunks(outputChunkList, totalBytesDecoded)
+    }
+
+    private fun decodeLoop(
+        extractor: MediaExtractor,
+        codec: MediaCodec,
+        durationUs: Long,
+        onProgress: ((Float, String) -> Unit)?
+    ): ByteArray {
+        val decoded = decodeChunks(extractor, codec, durationUs, onProgress)
+        val allBytes = ByteArray(decoded.totalBytes)
         var offset = 0
-        for (chunk in outputChunkList) {
+        for (chunk in decoded.chunks) {
             System.arraycopy(chunk, 0, allBytes, offset, chunk.size)
             offset += chunk.size
         }
         return allBytes
+    }
+
+    /**
+     * Konversi chunks raw 16-bit PCM Little Endian langsung ke Float32 stereo 44.1 kHz
+     * tanpa membuat array byte perantara yang besar di memori.
+     */
+    fun convertChunksToFloat32Stereo(
+        chunks: List<ByteArray>,
+        totalBytes: Int,
+        sourceSampleRate: Int,
+        sourceChannels: Int,
+        targetSampleRate: Int = TARGET_SAMPLE_RATE
+    ): AudioPcmData {
+        val total16BitSamples = totalBytes / 2
+        val sourceFrames = total16BitSamples / maxOf(1, sourceChannels)
+        if (sourceFrames <= 0) {
+            return AudioPcmData(FloatArray(0), targetSampleRate, TARGET_CHANNELS)
+        }
+
+        // Fast-path: 44.1 kHz stereo -> baca langsung ke array float interleaved dalam 1 alokasi
+        if (sourceSampleRate == targetSampleRate && sourceChannels == TARGET_CHANNELS) {
+            val interleaved = FloatArray(sourceFrames * TARGET_CHANNELS)
+            var floatIdx = 0
+            for (chunk in chunks) {
+                val bb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN)
+                while (bb.remaining() >= 2 && floatIdx < interleaved.size) {
+                    val s16 = bb.short.toFloat()
+                    interleaved[floatIdx++] = (s16 / 32768.0f).coerceIn(-1.0f, 1.0f)
+                }
+            }
+            return AudioPcmData(interleaved, targetSampleRate, TARGET_CHANNELS)
+        }
+
+        // Fast-path: 44.1 kHz mono -> duplikasi ke L & R stereo langsung
+        if (sourceSampleRate == targetSampleRate && sourceChannels == 1) {
+            val interleaved = FloatArray(sourceFrames * TARGET_CHANNELS)
+            var frameIdx = 0
+            for (chunk in chunks) {
+                val bb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN)
+                while (bb.remaining() >= 2 && frameIdx < sourceFrames) {
+                    val s16 = bb.short.toFloat()
+                    val s = (s16 / 32768.0f).coerceIn(-1.0f, 1.0f)
+                    interleaved[frameIdx * 2] = s
+                    interleaved[frameIdx * 2 + 1] = s
+                    frameIdx++
+                }
+            }
+            return AudioPcmData(interleaved, targetSampleRate, TARGET_CHANNELS)
+        }
+
+        // Fallback untuk resampling atau konfigurasi channel khusus
+        val allBytes = ByteArray(totalBytes)
+        var offset = 0
+        for (chunk in chunks) {
+            System.arraycopy(chunk, 0, allBytes, offset, chunk.size)
+            offset += chunk.size
+        }
+        return convertRawPcmToFloat32Stereo(allBytes, sourceSampleRate, sourceChannels, targetSampleRate)
     }
 
     /**
@@ -212,6 +285,35 @@ object AudioPcmDecoder {
         val sourceFrames = total16BitSamples / maxOf(1, sourceChannels)
         if (sourceFrames <= 0) {
             return AudioPcmData(FloatArray(0), targetSampleRate, TARGET_CHANNELS)
+        }
+
+        // Fast-path untuk 44.1 kHz stereo
+        if (sourceSampleRate == targetSampleRate && sourceChannels == TARGET_CHANNELS) {
+            val interleaved = FloatArray(sourceFrames * TARGET_CHANNELS)
+            val byteBuffer = ByteBuffer.wrap(rawBytes).order(ByteOrder.LITTLE_ENDIAN)
+            val totalCount = sourceFrames * TARGET_CHANNELS
+            for (i in 0 until totalCount) {
+                if (byteBuffer.remaining() >= 2) {
+                    val s16 = byteBuffer.short.toFloat()
+                    interleaved[i] = (s16 / 32768.0f).coerceIn(-1.0f, 1.0f)
+                }
+            }
+            return AudioPcmData(interleaved, targetSampleRate, TARGET_CHANNELS)
+        }
+
+        // Fast-path untuk 44.1 kHz mono
+        if (sourceSampleRate == targetSampleRate && sourceChannels == 1) {
+            val interleaved = FloatArray(sourceFrames * TARGET_CHANNELS)
+            val byteBuffer = ByteBuffer.wrap(rawBytes).order(ByteOrder.LITTLE_ENDIAN)
+            for (f in 0 until sourceFrames) {
+                if (byteBuffer.remaining() >= 2) {
+                    val s16 = byteBuffer.short.toFloat()
+                    val s = (s16 / 32768.0f).coerceIn(-1.0f, 1.0f)
+                    interleaved[f * 2] = s
+                    interleaved[f * 2 + 1] = s
+                }
+            }
+            return AudioPcmData(interleaved, targetSampleRate, TARGET_CHANNELS)
         }
 
         // 1. Ekstrak sampel Float [-1.0f, 1.0f] per-channel dari input

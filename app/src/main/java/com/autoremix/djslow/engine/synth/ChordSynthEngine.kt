@@ -1,7 +1,9 @@
 package com.autoremix.djslow.engine.synth
 
+import com.autoremix.djslow.engine.core.ArrangementEngine
 import com.autoremix.djslow.engine.music.Chord
 import com.autoremix.djslow.engine.pcm.AudioPcmData
+import com.autoremix.djslow.engine.structure.SongSectionType
 import com.autoremix.djslow.engine.timeline.MasterTimeline
 import com.autoremix.djslow.engine.timeline.TimelineEvent
 import kotlin.math.PI
@@ -68,6 +70,7 @@ object ChordSynthEngine {
         timeline: MasterTimeline,
         preset: ChordSynthPreset = ChordSynthPreset.SOFT_PIANO,
         volume: Float = 0.75f,
+        arrangement: ArrangementEngine.FullArrangement? = null,
         onProgress: ((Float, String) -> Unit)? = null
     ): AudioPcmData {
         val totalFrames = timeline.totalFrames.toInt()
@@ -87,6 +90,16 @@ object ChordSynthEngine {
             val eventEndFrame = minOf(event.endSample.toInt(), totalFrames)
             val eventFrames = eventEndFrame - eventStartFrame
 
+            val sec = arrangement?.getSectionForBar(event.barIndex)
+            val secVolume = when (sec?.sectionType) {
+                SongSectionType.DROP, SongSectionType.MAIN_DROP, SongSectionType.PEAK, SongSectionType.FINAL_DROP -> volume * 1.0f
+                SongSectionType.BREAK, SongSectionType.BREAKDOWN -> volume * 0.65f // Soft chord (BAGIAN D)
+                SongSectionType.BUILD_UP, SongSectionType.BUILD_UP_2, SongSectionType.FINAL_BUILD -> volume * 0.80f
+                SongSectionType.PRE_DROP -> volume * 0.60f
+                SongSectionType.INTRO, SongSectionType.OUTRO -> volume * 0.60f
+                else -> volume
+            }
+
             if (eventFrames > 0 && eventStartFrame < totalFrames) {
                 renderSingleChordIntoBuffer(
                     chord = event.chord,
@@ -96,7 +109,7 @@ object ChordSynthEngine {
                     channels = channels,
                     sampleRate = sampleRate,
                     preset = preset,
-                    volume = volume
+                    volume = secVolume
                 )
             }
 

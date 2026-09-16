@@ -48,6 +48,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import com.autoremix.djslow.ui.components.AnalysisResultCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -640,6 +641,11 @@ fun MainScreen(
                     )
                 }
             }
+
+            // ==========================================
+            // FASE 1: HASIL ANALISIS NYATA (SAYA MENEMUKAN)
+            // ==========================================
+            AnalysisResultCard(uiState = uiState)
 
             // ==========================================
             // MESIN MUSIK TAHAP 3 (BPM + KEY + CHORD + BASS)

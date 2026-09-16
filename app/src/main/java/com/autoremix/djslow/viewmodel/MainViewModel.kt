@@ -566,6 +566,7 @@ class MainViewModel : ViewModel() {
             _isAnalyzing.value = false
 
             result.onSuccess { analysis ->
+                _musicAnalysis.value = analysis.musicAnalysis
                 _vocalBpm.value = analysis.vocalBpm
                 _beatBpm.value = analysis.beatBpm
                 _targetBpm.value = analysis.targetBpm
@@ -591,6 +592,7 @@ class MainViewModel : ViewModel() {
 
                 _statusMessage.value = "Analisis selesai: ${analysis.targetBpm.roundToInt()} BPM, ${analysis.key.displayName}, ${_songSections.value.size} Seksi Lagu terdeteksi."
             }.onFailure { ex ->
+                _musicAnalysis.value = null
                 _errorMessage.value = "Analisis audio gagal: ${ex.message}"
                 _statusMessage.value = "Analisis gagal. Silakan coba lagi."
             }

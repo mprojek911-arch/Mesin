@@ -100,6 +100,18 @@ object SectionEngines {
                 SongSectionType.FINAL_DROP
             )
 
+            // Ambience FX di awal seksi Break (BAGIAN D)
+            if (sec.sectionType in listOf(SongSectionType.BREAK, SongSectionType.BREAKDOWN)) {
+                events.add(
+                    TransitionFxEvent(
+                        type = TransitionFxType.REVERSE_SWEEP,
+                        sampleOffset = sec.startSample,
+                        durationSamples = (sampleRate * 2.0).toInt(),
+                        velocity = 0.50f
+                    )
+                )
+            }
+
             // Jika seksi berikutnya adalah Drop, buat riser di bar terakhir seksi sekarang
             if (isNextDrop && nextSec != null) {
                 val riserDuration = (samplesPerBar * 2).toInt().coerceAtMost((sampleRate * 4.0).toInt())
@@ -182,6 +194,20 @@ object SectionEngines {
                         val v = ((sub + splash) * event.velocity * 0.45f).toFloat()
                         buffer[outIdx] += v
                         buffer[outIdx + 1] += v
+                    }
+                }
+
+                TransitionFxType.REVERSE_SWEEP -> {
+                    // Soft ethereal ambience sweep (filtered noise fading in then out)
+                    for (i in 0 until dur) {
+                        val outIdx = startIdx + i * channels
+                        if (outIdx + 1 >= buffer.size) break
+
+                        val t = i.toDouble() / dur
+                        val env = sin(t * PI).toFloat()
+                        val noise = (random.nextFloat() * 2f - 1f) * env * event.velocity * 0.25f
+                        buffer[outIdx] += noise
+                        buffer[outIdx + 1] += noise
                     }
                 }
 

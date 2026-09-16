@@ -62,7 +62,8 @@ object MusicUnderstandingEngine {
         val downbeats: List<Long>,
         val vocalPhrases: List<VocalPhrase>,
         val durationMs: Long,
-        val timeline: MasterTimeline
+        val timeline: MasterTimeline,
+        val energyCurve: com.autoremix.djslow.engine.structure.EnergyCurve? = null
     ) {
         val chordProgressionSummary: String
             get() = chords.joinToString(" - ") { it.displayName }
@@ -159,6 +160,11 @@ object MusicUnderstandingEngine {
                 }
             }
 
+            val energyCurve = com.autoremix.djslow.engine.structure.EnergyCurveEngine.buildEnergyCurve(
+                rawSections,
+                (maxDuration * timeline.sampleRate / 1000L)
+            )
+
             onProgress?.invoke(1.0f, "Analisis Music Understanding selesai.")
 
             val analysis = MusicAnalysis(
@@ -177,7 +183,8 @@ object MusicUnderstandingEngine {
                 downbeats = downbeats,
                 vocalPhrases = vocalPhrases,
                 durationMs = maxDuration,
-                timeline = timeline
+                timeline = timeline,
+                energyCurve = energyCurve
             )
 
             Result.success(analysis)
@@ -189,7 +196,7 @@ object MusicUnderstandingEngine {
     /**
      * Mendeteksi letak frasa vokal nyata dengan analisis energi RMS per blok 100ms.
      */
-    private fun detectVocalPhrases(vocalPcm: AudioPcmData?): List<VocalPhrase> {
+    internal fun detectVocalPhrases(vocalPcm: AudioPcmData?): List<VocalPhrase> {
         if (vocalPcm == null || vocalPcm.isSilent()) return emptyList()
 
         val sampleRate = vocalPcm.sampleRate

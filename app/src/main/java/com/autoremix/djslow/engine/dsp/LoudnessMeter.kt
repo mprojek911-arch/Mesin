@@ -86,10 +86,9 @@ object LoudnessMeter {
         val truePeakLinear = estimateTruePeak(samples, channels)
         val truePeakDbtp = if (truePeakLinear > 1e-6f) (20.0 * log10(truePeakLinear.toDouble())).toFloat() else -96.0f
 
-        // 3. Terapkan Filter K-Weighting ITU-R BS.1770-4
+        // 3. Terapkan Filter K-Weighting ITU-R BS.1770-4 dalam sub-blok 100ms
         // Tahap 1: High Shelf Filter (Pre-filter: ~1681 Hz, +4 dB)
         // Tahap 2: High Pass Filter (RLB filter: ~38 Hz cut)
-        val kWeighted = samples.copyOf()
         val stage1Filter = BiquadFilter(
             type = BiquadFilter.FilterType.HIGH_SHELF,
             frequencyHz = 1681.0f,
@@ -97,37 +96,45 @@ object LoudnessMeter {
             q = 0.7071f,
             gainDb = 4.0f
         )
-        stage1Filter.processInterleaved(kWeighted, channels)
-
         val stage2Filter = BiquadFilter(
             type = BiquadFilter.FilterType.HIGH_PASS,
             frequencyHz = 38.0f,
             sampleRate = sampleRate,
             q = 0.50f
         )
-        stage2Filter.processInterleaved(kWeighted, channels)
 
         // 4. Hitung Blok Loudness 400ms dengan 75% overlap (100ms hop)
-        val blockSize = (sampleRate * 0.400f).toInt().coerceAtLeast(1)
+        // Menghitung daya sub-blok 100ms secara streaming tanpa menduplikasi seluruh array PCM ke memori.
         val hopSize = (sampleRate * 0.100f).toInt().coerceAtLeast(1)
-        val blockPowers = mutableListOf<Double>()
+        val subBlockSamples = hopSize * channels
+        val subBlockBuffer = FloatArray(subBlockSamples)
+        val subBlockPowers = mutableListOf<Double>()
 
-        var frameStart = 0
-        while (frameStart + blockSize <= totalFrames) {
-            var sumP = 0.0
-            val count = blockSize * channels
-            for (f in 0 until blockSize) {
-                val idxL = (frameStart + f) * channels
-                val sL = kWeighted[idxL].toDouble()
-                sumP += sL * sL
-                if (channels > 1) {
-                    val sR = kWeighted[idxL + 1].toDouble()
-                    sumP += sR * sR
-                }
+        var subFrameStart = 0
+        while (subFrameStart + hopSize <= totalFrames) {
+            val srcOffset = subFrameStart * channels
+            System.arraycopy(samples, srcOffset, subBlockBuffer, 0, subBlockSamples)
+            stage1Filter.processInterleaved(subBlockBuffer, channels)
+            stage2Filter.processInterleaved(subBlockBuffer, channels)
+
+            var subSum = 0.0
+            for (i in 0 until subBlockSamples) {
+                val s = subBlockBuffer[i].toDouble()
+                subSum += s * s
             }
-            val meanP = sumP / count
-            blockPowers.add(meanP)
-            frameStart += hopSize
+            subBlockPowers.add(subSum / subBlockSamples)
+            subFrameStart += hopSize
+        }
+
+        // Blok 400ms dibentuk dari 4 sub-blok 100ms berturut-turut (overlap 75%)
+        val blockPowers = mutableListOf<Double>()
+        if (subBlockPowers.size >= 4) {
+            for (i in 0..subBlockPowers.size - 4) {
+                val mean400ms = (subBlockPowers[i] + subBlockPowers[i + 1] + subBlockPowers[i + 2] + subBlockPowers[i + 3]) / 4.0
+                blockPowers.add(mean400ms)
+            }
+        } else if (subBlockPowers.isNotEmpty()) {
+            blockPowers.add(subBlockPowers.average())
         }
 
         // 5. Gating ITU-R BS.1770

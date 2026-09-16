@@ -38,6 +38,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import com.autoremix.djslow.ui.components.AnalysisResultCard
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -270,38 +271,8 @@ fun QuickModeCard(
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // SAYA MENEMUKAN
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(NeonCyan)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "🔍 SAYA MENEMUKAN:",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = NeonCyan
-                        )
-                    }
-
-                    val foundBpm = uiState.musicAnalysis?.bpm?.roundToInt() ?: uiState.targetBpm.roundToInt()
-                    val foundKey = uiState.musicAnalysis?.key?.displayName ?: uiState.detectedKey.displayName
-                    val foundEnergy = uiState.musicAnalysis?.energyAverage ?: 0.55f
-                    val energyLabel = when {
-                        foundEnergy > 0.70f -> "Tinggi (${(foundEnergy * 100).toInt()}%)"
-                        foundEnergy > 0.40f -> "Sedang (${(foundEnergy * 100).toInt()}%)"
-                        else -> "Lembut (${(foundEnergy * 100).toInt()}%)"
-                    }
-
-                    Text(
-                        text = "• Tempo Asli: $foundBpm BPM\n• Tangga Nada: $foundKey\n• Karakter Energi: $energyLabel",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextPrimary,
-                        lineHeight = 20.sp
-                    )
+                    // FASE 1: Bagian F - SAYA MENEMUKAN (Hasil Analisis Musik Nyata)
+                    AnalysisResultCard(uiState = uiState)
 
                     Spacer(modifier = Modifier.height(4.dp))
 

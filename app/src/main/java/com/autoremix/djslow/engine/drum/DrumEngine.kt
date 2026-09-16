@@ -73,7 +73,8 @@ object DrumEngine {
                 SongSectionType.FINAL_DROP
             )
             val isIntro = section.sectionType == SongSectionType.INTRO
-            val isBreakdown = section.sectionType == SongSectionType.BREAKDOWN
+            val isBreak = section.sectionType in listOf(SongSectionType.BREAK, SongSectionType.BREAKDOWN)
+            val isPreDrop = section.sectionType == SongSectionType.PRE_DROP
             val isOutro = section.sectionType == SongSectionType.OUTRO
 
             for (bar in section.startBar until section.endBar) {
@@ -114,19 +115,74 @@ object DrumEngine {
                     continue
                 }
 
-                // BREAKDOWN: Kick & drum berat ditiadakan, hanya perkusi atmosferik
-                if (isBreakdown) {
-                    if (bar % 2 == 1) {
-                        val clapSample = barStartSample + (samplesPerBeat * 2) // Beat 3
+                // BREAK: Reduced kick, reduced drums, soft clap, gentle hats (BAGIAN D)
+                if (isBreak) {
+                    // Reduced kick: hanya ketukan downbeat halus di beat 1
+                    val reducedKickVel = 0.45f * energy * drumDensity
+                    events.add(
+                        DrumEvent(
+                            soundType = DrumSoundType.KICK,
+                            sampleOffset = barStartSample,
+                            durationSamples = (sampleRate * 0.25).toInt(),
+                            velocity = reducedKickVel
+                        )
+                    )
+                    // Soft clap di Beat 3
+                    val clapSample = barStartSample + (samplesPerBeat * 2)
+                    events.add(
+                        DrumEvent(
+                            soundType = DrumSoundType.CLAP,
+                            sampleOffset = clapSample,
+                            durationSamples = (sampleRate * 0.15).toInt(),
+                            velocity = 0.40f * drumDensity
+                        )
+                    )
+                    // Gentle closed hat di offbeat beat 2 dan beat 4
+                    for (beat in listOf(1, 3)) {
+                        val offbeatSample = barStartSample + (beat * samplesPerBeat) + (samplesPerBeat / 2)
                         events.add(
                             DrumEvent(
-                                soundType = DrumSoundType.CLAP,
-                                sampleOffset = clapSample,
-                                durationSamples = (sampleRate * 0.15).toInt(),
-                                velocity = 0.45f * drumDensity
+                                soundType = DrumSoundType.CLOSED_HAT,
+                                sampleOffset = offbeatSample,
+                                durationSamples = (sampleRate * 0.04).toInt(),
+                                velocity = 0.35f * drumDensity
                             )
                         )
                     }
+                    continue
+                }
+
+                // PRE-DROP: Reduced low end, snare roll tension, controlled silence menuju drop (BAGIAN D)
+                if (isPreDrop) {
+                    // Low end tereduksi: TIDAK ADA kick berat
+                    if (barInSec == 0) {
+                        // Hanya satu kick penanda awal pre-drop
+                        events.add(
+                            DrumEvent(
+                                soundType = DrumSoundType.KICK,
+                                sampleOffset = barStartSample,
+                                durationSamples = (sampleRate * 0.20).toInt(),
+                                velocity = 0.50f * drumDensity
+                            )
+                        )
+                    }
+
+                    // Snare roll tension di 2 beat awal bar
+                    val subBeats = 8
+                    val stepSample = (samplesPerBeat * 2) / subBeats
+                    for (i in 0 until subBeats) {
+                        val vel = (0.4f + 0.5f * (i.toFloat() / subBeats)) * drumDensity
+                        events.add(
+                            DrumEvent(
+                                soundType = DrumSoundType.FILL_SNARE,
+                                sampleOffset = barStartSample + i * stepSample,
+                                durationSamples = (sampleRate * 0.08).toInt(),
+                                velocity = vel
+                            )
+                        )
+                    }
+                    // CONTROLLED SILENCE: Dari beat 2.5 hingga akhir bar (menuju drop),
+                    // drum diheningkan total untuk menciptakan ruang hisap (tension vacuum)!
                     continue
                 }
 

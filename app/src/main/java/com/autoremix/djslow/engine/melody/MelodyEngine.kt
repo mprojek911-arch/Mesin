@@ -85,13 +85,31 @@ object MelodyEngine {
                 SongSectionType.PEAK,
                 SongSectionType.FINAL_DROP
             )
-            val isBreakdown = secType == SongSectionType.BREAKDOWN
+            val isBreak = secType in listOf(SongSectionType.BREAK, SongSectionType.BREAKDOWN)
+            val isPreDrop = secType == SongSectionType.PRE_DROP
             val isBuildUp = secType in listOf(
                 SongSectionType.BUILD_UP,
                 SongSectionType.BUILD_UP_2,
                 SongSectionType.FINAL_BUILD
             )
             val isOutro = secType == SongSectionType.OUTRO
+
+            // PRE-DROP: Melodi hening / teaser minimal (BAGIAN D)
+            if (isPreDrop) {
+                val barStartSample = section.startBar * samplesPerBar
+                val tonicMidi = 12 * (baseOctave + 2) + key.tonic.semitone
+                events.add(
+                    MelodyEvent(
+                        pitchHz = Chord.midiToFrequency(tonicMidi),
+                        midiNote = tonicMidi,
+                        sampleOffset = barStartSample,
+                        durationSamples = (samplesPerBeat * 0.75).toInt(),
+                        velocity = 0.35f * presence,
+                        layerType = MelodyLayerType.LEAD
+                    )
+                )
+                continue
+            }
 
             // INTRO: Nada jarang / motif sederhana di bar ke-5 dst
             if (isIntro) {
@@ -139,8 +157,8 @@ object MelodyEngine {
                 continue
             }
 
-            // BREAKDOWN: Melodi counter manis & santai (legato lembut)
-            if (isBreakdown) {
+            // BREAK / BREAKDOWN: Melodi counter manis & santai (legato lembut)
+            if (isBreak) {
                 for (bar in section.startBar until section.endBar) {
                     val barStartSample = bar * samplesPerBar
                     val tonicMidi = 12 * (baseOctave + 1) + key.tonic.semitone

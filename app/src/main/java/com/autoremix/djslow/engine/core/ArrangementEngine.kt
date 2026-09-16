@@ -2,7 +2,10 @@ package com.autoremix.djslow.engine.core
 
 import com.autoremix.djslow.engine.structure.SongSection
 import com.autoremix.djslow.engine.structure.SongSectionType
+import com.autoremix.djslow.engine.timeline.MasterMusicalClock
 import kotlin.math.max
+
+typealias Arrangement = ArrangementEngine.FullArrangement
 
 /**
  * 5. ARRANGEMENT ENGINE
@@ -39,7 +42,9 @@ object ArrangementEngine {
         val fxMode: FxMode
     ) {
         val barCount: Int get() = max(1, endBar - startBar)
+        val duration: Long get() = durationMs
         val durationMs: Long get() = endTimeMs - startTimeMs
+        val durationSamples: Long get() = max(0L, endSample - startSample)
 
         fun toSongSection(): SongSection {
             return SongSection(
@@ -63,6 +68,18 @@ object ArrangementEngine {
         fun getSectionForBar(bar: Int): ArrangedSection? {
             return sections.firstOrNull { bar in it.startBar until it.endBar }
         }
+    }
+
+    /**
+     * Membangun aransemen lengkap berdasarkan MusicAnalysis, MusicalMap, dan RemixPlan.
+     * Mengadaptasi struktur seksi secara proporsional sesuai durasi musik sumber.
+     */
+    fun createArrangement(
+        analysis: MusicUnderstandingEngine.MusicAnalysis,
+        musicalMap: MusicalMapEngine.MusicalMap,
+        remixPlan: RemixBrain.RemixPlan
+    ): FullArrangement {
+        return createArrangement(musicalMap, remixPlan)
     }
 
     /**
@@ -214,10 +231,11 @@ object ArrangementEngine {
         fxMode: FxMode
     ) {
         if (endBar <= startBar) return
-        val startSample = startBar * samplesPerBar
-        val endSample = endBar * samplesPerBar
-        val startTimeMs = (startSample * 1000L) / 44100L
-        val endTimeMs = (endSample * 1000L) / 44100L
+        val clock = MasterMusicalClock(remixPlan.targetBpm, 44100)
+        val startSample = clock.getDownbeatSampleForBar(startBar)
+        val endSample = clock.getDownbeatSampleForBar(endBar)
+        val startTimeMs = clock.beatToMs(startBar * 4f)
+        val endTimeMs = clock.beatToMs(endBar * 4f)
         val energy = (baseEnergy * (remixPlan.energyPreference.targetEnergy / 0.60f)).coerceIn(0.1f, 1.0f)
 
         list.add(

@@ -97,10 +97,23 @@ object MusicGeneratorEngine {
                 key = remixPlan.targetKey,
                 patternType = remixPlan.bassPlan.patternType
             )
-            // Filter out bass pada seksi PRE-DROP untuk menghasilkan tension drop
-            val filteredBassEvents = rawBassEvents.filter { bassEvent ->
+            // BAGIAN D Section Behavior:
+            // DROP: full bass
+            // BREAK: light bass (reduced velocity)
+            // BUILD: controlled bass (steady)
+            // PRE-DROP: reduced low end (mute bass to build drop tension)
+            val filteredBassEvents = rawBassEvents.mapNotNull { bassEvent ->
                 val sec = arrangement.getSectionForBar(bassEvent.barIndex)
-                sec?.bassMode != ArrangementEngine.BassMode.OFF
+                when {
+                    sec == null || sec.bassMode == ArrangementEngine.BassMode.OFF || sec.sectionType == SongSectionType.PRE_DROP -> null
+                    sec.sectionType in listOf(SongSectionType.BREAK, SongSectionType.BREAKDOWN) -> {
+                        bassEvent.copy(velocity = (bassEvent.velocity * 0.55f).coerceIn(0.1f, 1.0f))
+                    }
+                    sec.sectionType in listOf(SongSectionType.BUILD_UP, SongSectionType.BUILD_UP_2, SongSectionType.FINAL_BUILD) -> {
+                        bassEvent.copy(velocity = (bassEvent.velocity * 0.70f).coerceIn(0.1f, 1.0f))
+                    }
+                    else -> bassEvent
+                }
             }
             val bassPcm = BassEngine.renderBassPcm(
                 timeline = timeline,
@@ -113,7 +126,8 @@ object MusicGeneratorEngine {
             val chordPcm = ChordSynthEngine.renderProgressionPcm(
                 timeline = timeline,
                 preset = remixPlan.chordPlan.preset,
-                volume = remixPlan.chordPlan.volume
+                volume = remixPlan.chordPlan.volume,
+                arrangement = arrangement
             )
 
             // 5. Generate MELODY HOOK (Procedural dari seed)

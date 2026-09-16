@@ -83,7 +83,8 @@ object AudioMixPipeline {
         val chordProgression: ChordEngine.ProgressionResult,
         val timeline: MasterTimeline,
         val durationMs: Long,
-        val arrangementPlan: AutoArrangementPlan? = null
+        val arrangementPlan: AutoArrangementPlan? = null,
+        val musicAnalysis: com.autoremix.djslow.engine.core.MusicUnderstandingEngine.MusicAnalysis? = null
     )
 
     data class PipelineResult(
@@ -180,6 +181,30 @@ object AudioMixPipeline {
             )
             timeline = arrangementPlan.updatedTimeline
 
+            val downbeats = timeline.beatGrid.filter { it.beatInBar == 0 }.map { it.sampleOffset }
+            val vocalPhrases = com.autoremix.djslow.engine.core.MusicUnderstandingEngine.detectVocalPhrases(vocalPcm)
+            val energyAvg = arrangementPlan.energyAnalysis?.overallRms ?: 0.5f
+
+            val musicAnalysis = com.autoremix.djslow.engine.core.MusicUnderstandingEngine.MusicAnalysis(
+                bpm = effectiveBpm,
+                bpmConfidence = if (manualBpm != null) 1.0f else bpmAnalysis.targetConfidence,
+                isBpmEstimated = manualBpm == null && bpmAnalysis.isTargetEstimated,
+                key = effectiveKey,
+                keyConfidence = keyConfidence,
+                isKeyEstimated = isKeyEstimated,
+                chords = chordProgression.chordProgressionSummary,
+                chordConfidence = chordProgression.confidence,
+                sections = arrangementPlan.sections,
+                energyAverage = energyAvg,
+                energyAnalysis = arrangementPlan.energyAnalysis,
+                beatAnalysis = arrangementPlan.beatAnalysis,
+                downbeats = downbeats,
+                vocalPhrases = vocalPhrases,
+                durationMs = totalDurationMs,
+                timeline = timeline,
+                energyCurve = arrangementPlan.energyCurve
+            )
+
             onProgress?.invoke(1.0f, "Analisis dan aransemen struktur selesai.")
 
             val result = AnalysisResult(
@@ -195,7 +220,8 @@ object AudioMixPipeline {
                 chordProgression = chordProgression,
                 timeline = timeline,
                 durationMs = totalDurationMs,
-                arrangementPlan = arrangementPlan
+                arrangementPlan = arrangementPlan,
+                musicAnalysis = musicAnalysis
             )
 
             return@withContext Result.success(result)

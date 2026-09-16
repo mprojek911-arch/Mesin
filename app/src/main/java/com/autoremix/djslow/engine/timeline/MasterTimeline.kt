@@ -62,9 +62,9 @@ data class BeatGridPoint(
  * MASTER CLOCK (44.1 kHz) -> BPM -> BEAT GRID -> BAR -> CHORD & BASS EVENTS.
  */
 data class MasterTimeline(
-    val bpm: Float = 80.0f,
-    val beatsPerBar: Int = 4,
-    val sampleRate: Int = 44100,
+    override val bpm: Float = 80.0f,
+    override val beatsPerBar: Int = 4,
+    override val sampleRate: Int = 44100,
     val totalDurationMs: Long = 180000L, // Default 3 menit
     val beatGrid: List<BeatGridPoint> = emptyList(),
     val chordEvents: List<TimelineEvent.ChordEvent> = emptyList(),
@@ -74,26 +74,50 @@ data class MasterTimeline(
     val drumEvents: List<DrumEvent> = emptyList(),
     val melodyEvents: List<MelodyEvent> = emptyList(),
     val transitionEvents: List<TransitionFxEvent> = emptyList()
-) {
+) : IMusicalClock {
     val totalFrames: Long = (totalDurationMs * sampleRate) / 1000L
-    val samplesPerBeat: Double = (sampleRate * 60.0) / bpm
-    val msPerBeat: Double = (60.0 * 1000.0) / bpm
+    override val samplesPerBeat: Double = (sampleRate * 60.0) / bpm.coerceIn(40.0f, 240.0f)
+    override val msPerBeat: Double = (60.0 * 1000.0) / bpm.coerceIn(40.0f, 240.0f)
     val totalBeats: Int get() = beatGrid.size
     val totalBars: Int = if (beatGrid.isEmpty()) 0 else (beatGrid.size + beatsPerBar - 1) / beatsPerBar
 
     /**
      * Mengkonversi posisi ketukan total menjadi sample offset di Master Clock.
      */
-    fun beatToSample(beat: Float): Long {
+    override fun beatToSample(beat: Float): Long {
         return (beat * samplesPerBeat).toLong().coerceIn(0L, totalFrames)
     }
 
     /**
      * Mengkonversi posisi ketukan total menjadi milidetik.
      */
-    fun beatToMs(beat: Float): Long {
+    override fun beatToMs(beat: Float): Long {
         return (beat * msPerBeat).toLong()
     }
+
+    override fun sampleToBeat(sample: Long): Float {
+        return (sample.coerceIn(0L, totalFrames) / samplesPerBeat).toFloat()
+    }
+
+    override fun msToBeat(ms: Long): Float {
+        return (ms / msPerBeat).toFloat()
+    }
+
+    override fun sampleToMs(sample: Long): Long {
+        return ((sample * 1000L) / sampleRate)
+    }
+
+    override fun msToSample(ms: Long): Long {
+        return ((ms * sampleRate) / 1000L).coerceIn(0L, totalFrames)
+    }
+
+    override fun getBarForBeat(beat: Float): Int = (beat / beatsPerBar).toInt()
+
+    override fun getBeatInBar(beat: Float): Float = beat % beatsPerBar
+
+    override fun getDownbeatSampleForBar(barIndex: Int): Long = beatToSample((barIndex * beatsPerBar).toFloat())
+
+    override fun getDownbeatMsForBar(barIndex: Int): Long = beatToMs((barIndex * beatsPerBar).toFloat())
 
     /**
      * Mendapatkan akor aktif pada sample clock tertentu.

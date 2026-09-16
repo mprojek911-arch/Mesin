@@ -69,9 +69,13 @@ object PadEngine {
                         val prog = (bar - section.startBar).toFloat() / maxOf(1, section.barCount)
                         Quad(1200f + 2500f * prog, 400f, 600f, (0.40f + 0.35f * prog) * warmth)
                     }
-                    SongSectionType.BREAKDOWN -> {
+                    SongSectionType.BREAK, SongSectionType.BREAKDOWN -> {
                         // Pad lush paling menonjol, hangat, LPF 1800 Hz
                         Quad(1800f, 600f, 800f, 0.70f * warmth)
+                    }
+                    SongSectionType.PRE_DROP -> {
+                        // Dramatic swell pad menuju drop (BAGIAN D)
+                        Quad(2200f, 250f, 300f, 0.60f * warmth)
                     }
                     SongSectionType.DROP, SongSectionType.MAIN_DROP, SongSectionType.PEAK, SongSectionType.FINAL_DROP -> {
                         // Pad lebar menopang bass & melodi, LPF 2800 Hz, attack cepat (150 ms)
