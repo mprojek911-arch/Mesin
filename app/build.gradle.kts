@@ -56,7 +56,14 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        it.systemProperty("java.awt.headless", "true")
+      }
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
