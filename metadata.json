@@ -1,6 +1,6 @@
 {
   "name": "AUTO REMIX DJ SLOW",
-  "description": "Aplikasi AUTO REMIX DJ SLOW Tahap 3: Mesin Musik Nyata (BPM Engine, Key Engine, Chord Engine, Chord Synth Engine, Bass Engine, Master Timeline, 4-Track Mixing PCM Float32, WAV Render 44.1kHz).",
+  "description": "Aplikasi AUTO REMIX DJ SLOW Tahap 4: Mesin Aransemen Struktur & Energi Auto DJ (Drum Engine, Melody Engine, Pad Engine, Auto Arranger, Kick-Bass Sidechain Ducking, Transition FX, Multi-Track Mixing PCM Float32, WAV Render 44.1kHz).",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

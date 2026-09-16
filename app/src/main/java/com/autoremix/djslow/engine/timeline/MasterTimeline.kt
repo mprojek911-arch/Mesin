@@ -1,7 +1,12 @@
 package com.autoremix.djslow.engine.timeline
 
+import com.autoremix.djslow.engine.arrangement.TransitionFxEvent
+import com.autoremix.djslow.engine.drum.DrumEvent
+import com.autoremix.djslow.engine.melody.MelodyEvent
 import com.autoremix.djslow.engine.music.Chord
 import com.autoremix.djslow.engine.music.MusicKey
+import com.autoremix.djslow.engine.structure.EnergyCurve
+import com.autoremix.djslow.engine.structure.SongSection
 
 /**
  * Event pada Master Timeline.
@@ -63,7 +68,12 @@ data class MasterTimeline(
     val totalDurationMs: Long = 180000L, // Default 3 menit
     val beatGrid: List<BeatGridPoint> = emptyList(),
     val chordEvents: List<TimelineEvent.ChordEvent> = emptyList(),
-    val bassEvents: List<TimelineEvent.BassEvent> = emptyList()
+    val bassEvents: List<TimelineEvent.BassEvent> = emptyList(),
+    val sections: List<SongSection> = emptyList(),
+    val energyCurve: EnergyCurve? = null,
+    val drumEvents: List<DrumEvent> = emptyList(),
+    val melodyEvents: List<MelodyEvent> = emptyList(),
+    val transitionEvents: List<TransitionFxEvent> = emptyList()
 ) {
     val totalFrames: Long = (totalDurationMs * sampleRate) / 1000L
     val samplesPerBeat: Double = (sampleRate * 60.0) / bpm

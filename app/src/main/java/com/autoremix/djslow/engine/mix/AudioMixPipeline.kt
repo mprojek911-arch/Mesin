@@ -4,10 +4,17 @@ import android.content.Context
 import android.net.Uri
 import com.autoremix.djslow.engine.analysis.BpmDetector
 import com.autoremix.djslow.engine.analysis.KeyDetector
+import com.autoremix.djslow.engine.arrangement.AutoArrangementPlan
+import com.autoremix.djslow.engine.arrangement.AutoArranger
+import com.autoremix.djslow.engine.arrangement.AutoDjPreset
+import com.autoremix.djslow.engine.arrangement.SectionEngines
+import com.autoremix.djslow.engine.drum.DrumEngine
+import com.autoremix.djslow.engine.melody.MelodyEngine
 import com.autoremix.djslow.engine.music.ChordEngine
 import com.autoremix.djslow.engine.music.MusicKey
 import com.autoremix.djslow.engine.music.MusicMode
 import com.autoremix.djslow.engine.music.PitchClass
+import com.autoremix.djslow.engine.pad.PadEngine
 import com.autoremix.djslow.engine.pcm.AudioPcmData
 import com.autoremix.djslow.engine.pcm.AudioPcmDecoder
 import com.autoremix.djslow.engine.synth.BassEngine
@@ -25,8 +32,13 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Pipeline Audio Nyata Tahap 3 — MUSIK (BPM + KEY + CHORD + BASS):
- * ANALISIS -> TIMELINE -> SINTESIS CHORD PCM -> SINTESIS BASS PCM -> MIXING 4-TRACK -> RENDER WAV -> VALIDASI
+ * Pipeline Audio Nyata Tahap 4 — ARRANGEMENT:
+ * DRUM + MELODY + PAD + AUTO DJ ENERGY STRUCTURE ENGINE
+ *
+ * ALUR PIPELINE:
+ * DECODE -> ANALISIS (BPM + Key + Energy + Beat Content) -> AUTO ARRANGER (Struktur, Kurva Energi, Pola)
+ * -> SINTESIS CHORD PCM -> SINTESIS BASS PCM -> SINTESIS DRUM PCM -> SINTESIS MELODI PCM
+ * -> SINTESIS PAD PCM -> FX TRANSISI -> KICK-BASS SIDECHAIN DUCKING -> MULTI-TRACK MIXING -> WAV RENDER -> VALIDASI
  */
 object AudioMixPipeline {
 
@@ -34,10 +46,14 @@ object AudioMixPipeline {
         PERSIAPAN("Mempersiapkan render"),
         DECODE_VOKAL("Mendekode Vokal ke PCM"),
         DECODE_BEAT("Mendekode Beat ke PCM"),
-        ANALISIS_MUSIK("Menganalisis BPM & Tangga Nada"),
+        ANALISIS_DAN_STRUKTUR("Menganalisis Musik & Menyusun Struktur Lagu"),
         SINTESIS_CHORD("Mensintesis Akor PCM"),
         SINTESIS_BASS("Mensintesis Bass PCM"),
-        MIXING("Proses Mixing 4-Trek Audio"),
+        SINTESIS_DRUM("Mensintesis Drum Pola DJ Slow"),
+        SINTESIS_MELODI("Mensintesis Melodi Hook PCM"),
+        SINTESIS_PAD("Mensintesis Pad Atmosfir"),
+        PROSES_SIDECHAIN("Sinkronisasi Kick & Bass (Sidechain Ducking)"),
+        MIXING("Proses Multi-Track Mixing"),
         RENDER_WAV("Merender berkas WAV 44.1 kHz"),
         VALIDASI("Memvalidasi integritas berkas WAV"),
         SELESAI("Selesai")
@@ -55,7 +71,8 @@ object AudioMixPipeline {
         val keyConfidence: Float,
         val chordProgression: ChordEngine.ProgressionResult,
         val timeline: MasterTimeline,
-        val durationMs: Long
+        val durationMs: Long,
+        val arrangementPlan: AutoArrangementPlan? = null
     )
 
     data class PipelineResult(
@@ -64,12 +81,12 @@ object AudioMixPipeline {
         val durationMs: Long,
         val timeline: MasterTimeline,
         val key: MusicKey,
-        val targetBpm: Float
+        val targetBpm: Float,
+        val arrangementPlan: AutoArrangementPlan?
     )
 
     /**
-     * Menganalisis track vokal dan/atau beat untuk mendeteksi BPM, Tangga Nada (Key),
-     * Progresi Akor, serta menyusun Master Timeline.
+     * Menganalisis track vokal dan beat, mendeteksi struktur, energi, progresi akor, dan beat content.
      */
     suspend fun analyzeAudio(
         context: Context,
@@ -77,6 +94,8 @@ object AudioMixPipeline {
         beatUri: Uri?,
         manualBpm: Float? = null,
         manualKey: MusicKey? = null,
+        preset: AutoDjPreset = AutoDjPreset.DJ_SLOW,
+        melodySeed: Long = 42L,
         onProgress: ((Float, String) -> Unit)? = null
     ): Result<AnalysisResult> = withContext(Dispatchers.IO) {
         try {
@@ -108,35 +127,45 @@ object AudioMixPipeline {
                 )
             }
 
-            onProgress?.invoke(0.60f, "Menganalisis BPM Vokal dan Beat...")
+            onProgress?.invoke(0.55f, "Menganalisis BPM Vokal dan Beat...")
             val bpmAnalysis = BpmDetector.analyzeBoth(vocalPcm, beatPcm)
             val effectiveBpm = manualBpm ?: bpmAnalysis.targetBpm
 
-            onProgress?.invoke(0.75f, "Mendeteksi Tangga Nada (Chroma & Key Profile)...")
-            // Deteksi tangga nada diutamakan dari vokal, jika tidak ada vokal gunakan beat
+            onProgress?.invoke(0.70f, "Mendeteksi Tangga Nada (Chroma & Key Profile)...")
             val keyAnalysis = KeyDetector.detectKey(vocalPcm ?: beatPcm)
             val effectiveKey = manualKey ?: keyAnalysis?.key ?: MusicKey(PitchClass.A, MusicMode.MINOR, 0.35f)
             val isKeyEstimated = manualKey == null && (keyAnalysis == null || keyAnalysis.isEstimated)
             val keyConfidence = manualKey?.confidence ?: keyAnalysis?.confidence ?: 0.35f
 
-            onProgress?.invoke(0.85f, "Menyusun Master Timeline & Beat Grid...")
+            onProgress?.invoke(0.80f, "Menyusun Master Timeline & Grid Ketukan...")
             val vocalDuration = vocalPcm?.durationMs ?: 0L
             val beatDuration = beatPcm?.durationMs ?: 0L
-            val totalDurationMs = maxOf(vocalDuration, beatDuration, 12000L) // minimal 12 detik
+            val totalDurationMs = maxOf(vocalDuration, beatDuration, 12000L)
 
             var timeline = MasterTimeline.build(
                 bpm = effectiveBpm,
                 totalDurationMs = totalDurationMs
             )
 
-            onProgress?.invoke(0.95f, "Menyelaraskan Progresi Akor & Pola Bass...")
             val chordProgression = ChordEngine.buildChordProgression(timeline, effectiveKey, vocalPcm)
             timeline = timeline.copy(chordEvents = chordProgression.chordEvents)
 
             val bassEvents = BassEngine.generateBassEvents(timeline, effectiveKey, BassPatternType.DJ_SLOW_BASS)
             timeline = timeline.copy(bassEvents = bassEvents)
 
-            onProgress?.invoke(1.0f, "Analisis musik selesai.")
+            onProgress?.invoke(0.90f, "Menyusun Aransemen Lagu & Deteksi Seksi Otomatis...")
+            val arrangementPlan = AutoArranger.arrange(
+                vocalPcm = vocalPcm,
+                beatPcm = beatPcm,
+                timeline = timeline,
+                key = effectiveKey,
+                chords = chordProgression.chordProgressionSummary,
+                preset = preset,
+                melodySeed = melodySeed
+            )
+            timeline = arrangementPlan.updatedTimeline
+
+            onProgress?.invoke(1.0f, "Analisis dan aransemen struktur selesai.")
 
             val result = AnalysisResult(
                 vocalBpm = bpmAnalysis.vocalBpm,
@@ -150,7 +179,8 @@ object AudioMixPipeline {
                 keyConfidence = keyConfidence,
                 chordProgression = chordProgression,
                 timeline = timeline,
-                durationMs = totalDurationMs
+                durationMs = totalDurationMs,
+                arrangementPlan = arrangementPlan
             )
 
             return@withContext Result.success(result)
@@ -160,8 +190,8 @@ object AudioMixPipeline {
     }
 
     /**
-     * Menjalankan pipeline lengkap:
-     * DECODE -> MUSICAL SYNTHESIS (Chord + Bass) -> 4-TRACK MIXING -> WAV RENDER -> VALIDATION
+     * Menjalankan rendering lengkap aransemen Tahap 4:
+     * DECODE -> ARRANGE -> SYNTHESIZE ALL INSTRUMENTS -> MIX -> RENDER WAV -> VALIDATE
      */
     suspend fun run(
         context: Context,
@@ -171,6 +201,8 @@ object AudioMixPipeline {
         musicKey: MusicKey = MusicKey(PitchClass.A, MusicMode.MINOR),
         chordPreset: ChordSynthPreset = ChordSynthPreset.SOFT_PIANO,
         bassPattern: BassPatternType = BassPatternType.DJ_SLOW_BASS,
+        preset: AutoDjPreset = AutoDjPreset.DJ_SLOW,
+        melodySeed: Long = 42L,
         params: MixEngine.MixParams = MixEngine.MixParams(),
         onProgress: (step: PipelineStep, progressFraction: Float, message: String) -> Unit
     ): Result<PipelineResult> = withContext(Dispatchers.IO) {
@@ -181,14 +213,14 @@ object AudioMixPipeline {
                 )
             }
 
-            onProgress(PipelineStep.PERSIAPAN, 0.05f, "Mempersiapkan pipeline render audio...")
+            onProgress(PipelineStep.PERSIAPAN, 0.04f, "Mempersiapkan pipeline aransemen audio...")
 
             // 1. Decode Vokal
             var vocalPcm: AudioPcmData? = null
             if (vocalUri != null) {
-                onProgress(PipelineStep.DECODE_VOKAL, 0.10f, "Mendekode trek Vokal ke PCM Float32...")
+                onProgress(PipelineStep.DECODE_VOKAL, 0.08f, "Mendekode trek Vokal ke PCM Float32...")
                 val vResult = AudioPcmDecoder.decodeToPcm(context, vocalUri) { subProg, msg ->
-                    onProgress(PipelineStep.DECODE_VOKAL, 0.10f + 0.15f * subProg, "Vokal: $msg")
+                    onProgress(PipelineStep.DECODE_VOKAL, 0.08f + 0.10f * subProg, "Vokal: $msg")
                 }
                 if (vResult.isFailure) {
                     return@withContext Result.failure(
@@ -201,9 +233,9 @@ object AudioMixPipeline {
             // 2. Decode Beat
             var beatPcm: AudioPcmData? = null
             if (beatUri != null) {
-                onProgress(PipelineStep.DECODE_BEAT, 0.25f, "Mendekode trek Beat ke PCM Float32...")
+                onProgress(PipelineStep.DECODE_BEAT, 0.20f, "Mendekode trek Beat ke PCM Float32...")
                 val bResult = AudioPcmDecoder.decodeToPcm(context, beatUri) { subProg, msg ->
-                    onProgress(PipelineStep.DECODE_BEAT, 0.25f + 0.15f * subProg, "Beat: $msg")
+                    onProgress(PipelineStep.DECODE_BEAT, 0.20f + 0.10f * subProg, "Beat: $msg")
                 }
                 if (bResult.isFailure) {
                     return@withContext Result.failure(
@@ -213,8 +245,8 @@ object AudioMixPipeline {
                 beatPcm = bResult.getOrNull()
             }
 
-            // 3. Bangun Master Timeline & Analisis Akor
-            onProgress(PipelineStep.ANALISIS_MUSIK, 0.42f, "Menyusun Master Timeline (${targetBpm.toInt()} BPM, ${musicKey.displayName})...")
+            // 3. Bangun Master Timeline, Progresi Akor & Aransemen Struktur Lagu
+            onProgress(PipelineStep.ANALISIS_DAN_STRUKTUR, 0.32f, "Menyusun struktur seksi lagu & kurva energi...")
             val maxAudioDurationMs = maxOf(vocalPcm?.durationMs ?: 0L, beatPcm?.durationMs ?: 0L, 8000L)
 
             var timeline = MasterTimeline.build(
@@ -228,42 +260,110 @@ object AudioMixPipeline {
             val bassEvents = BassEngine.generateBassEvents(timeline, musicKey, bassPattern)
             timeline = timeline.copy(bassEvents = bassEvents)
 
-            // 4. Sintesis Akor PCM Nyata
+            val arrangementPlan = AutoArranger.arrange(
+                vocalPcm = vocalPcm,
+                beatPcm = beatPcm,
+                timeline = timeline,
+                key = musicKey,
+                chords = chordProgression.chordProgressionSummary,
+                preset = preset,
+                melodySeed = melodySeed
+            )
+            timeline = arrangementPlan.updatedTimeline
+            val totalFrames = timeline.totalFrames
+            val sampleRate = timeline.sampleRate
+
+            // 4. Sintesis Akor PCM
             var chordPcm: AudioPcmData? = null
             if (params.chordSettings.volume > 0.0f && !params.chordSettings.isMuted) {
-                onProgress(PipelineStep.SINTESIS_CHORD, 0.50f, "Mensintesis audio Akor PCM (${chordPreset.label})...")
+                onProgress(PipelineStep.SINTESIS_CHORD, 0.40f, "Mensintesis Akor PCM (${chordPreset.label})...")
                 chordPcm = ChordSynthEngine.renderProgressionPcm(
                     timeline = timeline,
                     preset = chordPreset,
                     volume = params.chordSettings.volume
                 ) { subProg, msg ->
-                    onProgress(PipelineStep.SINTESIS_CHORD, 0.50f + 0.10f * subProg, msg)
+                    onProgress(PipelineStep.SINTESIS_CHORD, 0.40f + 0.06f * subProg, msg)
                 }
             }
 
-            // 5. Sintesis Bass PCM Nyata
+            // 5. Sintesis Bass PCM
             var bassPcm: AudioPcmData? = null
             if (params.bassSettings.volume > 0.0f && !params.bassSettings.isMuted) {
-                onProgress(PipelineStep.SINTESIS_BASS, 0.60f, "Mensintesis audio Bass PCM (${bassPattern.label})...")
+                onProgress(PipelineStep.SINTESIS_BASS, 0.48f, "Mensintesis Bass PCM (${bassPattern.label})...")
                 bassPcm = BassEngine.renderBassPcm(
                     timeline = timeline,
                     bassEvents = bassEvents,
-                    volume = params.bassSettings.volume
+                    volume = params.bassSettings.volume * preset.bassMultiplier
                 ) { subProg, msg ->
-                    onProgress(PipelineStep.SINTESIS_BASS, 0.60f + 0.10f * subProg, msg)
+                    onProgress(PipelineStep.SINTESIS_BASS, 0.48f + 0.06f * subProg, msg)
                 }
             }
 
-            // 6. 4-Track Mixing (Vokal + Beat + Chord + Bass)
-            onProgress(PipelineStep.MIXING, 0.72f, "Mixing 4-Trek (Vokal, Beat, Chord, Bass) dengan Headroom...")
+            // 6. Sintesis Drum PCM
+            var drumPcm: AudioPcmData? = null
+            if (params.drumSettings.volume > 0.0f && !params.drumSettings.isMuted) {
+                onProgress(PipelineStep.SINTESIS_DRUM, 0.55f, "Mensintesis Drum Pola DJ Slow (Kick, Snare, Claps, Fills)...")
+                drumPcm = DrumEngine.renderDrums(
+                    events = arrangementPlan.drumEvents,
+                    totalSamples = totalFrames,
+                    sampleRate = sampleRate
+                )
+            }
+
+            // 7. Sintesis Melodi Hook PCM
+            var melodyPcm: AudioPcmData? = null
+            if (params.melodySettings.volume > 0.0f && !params.melodySettings.isMuted) {
+                onProgress(PipelineStep.SINTESIS_MELODI, 0.62f, "Mensintesis Melodi Hook (Algorithmic Lead & Counter)...")
+                melodyPcm = MelodyEngine.renderMelody(
+                    events = arrangementPlan.melodyEvents,
+                    totalSamples = totalFrames,
+                    sampleRate = sampleRate
+                )
+            }
+
+            // 8. Sintesis Pad Atmosfir PCM
+            var padPcm: AudioPcmData? = null
+            if (params.padSettings.volume > 0.0f && !params.padSettings.isMuted) {
+                onProgress(PipelineStep.SINTESIS_PAD, 0.68f, "Mensintesis Pad Atmosfir Harmonis...")
+                padPcm = PadEngine.renderPad(
+                    events = arrangementPlan.padEvents,
+                    totalSamples = totalFrames,
+                    sampleRate = sampleRate
+                )
+            }
+
+            // 9. FX Transisi & Risers
+            onProgress(PipelineStep.PROSES_SIDECHAIN, 0.72f, "Menghasilkan FX Transisi & Risers...")
+            val transitionPcm = SectionEngines.renderTransitions(
+                events = arrangementPlan.transitionEvents,
+                totalSamples = totalFrames,
+                sampleRate = sampleRate
+            )
+
+            // 10. Terapkan Kick-Bass Sidechain Ducking
+            if (bassPcm != null && arrangementPlan.drumEvents.isNotEmpty()) {
+                onProgress(PipelineStep.PROSES_SIDECHAIN, 0.75f, "Menerapkan Sidechain Ducking (Kick & Sub-Bass)...")
+                bassPcm = com.autoremix.djslow.engine.mix.KickBassEngine.applySidechainDucking(
+                    bassPcm = bassPcm,
+                    drumEvents = arrangementPlan.drumEvents,
+                    sampleRate = sampleRate
+                )
+            }
+
+            // 11. Multi-Track Mixing
+            onProgress(PipelineStep.MIXING, 0.78f, "Mixing multi-track dengan proteksi Headroom (-0.5 dB)...")
             val mixResult = MixEngine.mix(
                 vocalPcm = vocalPcm,
                 beatPcm = beatPcm,
                 chordPcm = chordPcm,
                 bassPcm = bassPcm,
+                drumPcm = drumPcm,
+                melodyPcm = melodyPcm,
+                padPcm = padPcm,
+                transitionPcm = transitionPcm,
                 params = params
             ) { subProg, msg ->
-                onProgress(PipelineStep.MIXING, 0.72f + 0.10f * subProg, "Mix: $msg")
+                onProgress(PipelineStep.MIXING, 0.78f + 0.08f * subProg, "Mix: $msg")
             }
 
             if (mixResult.isFailure) {
@@ -273,14 +373,14 @@ object AudioMixPipeline {
             }
             val mixedPcm = mixResult.getOrThrow()
 
-            // 7. Render ke Berkas WAV 44.1 kHz
+            // 12. Render ke Berkas WAV 44.1 kHz
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val outputDir = File(context.filesDir, "rendered_wav").apply { mkdirs() }
             val outputFile = File(outputDir, "DJ_SLOW_MIX_$timestamp.wav")
 
-            onProgress(PipelineStep.RENDER_WAV, 0.83f, "Merender berkas audio WAV 44.1 kHz 16-bit...")
+            onProgress(PipelineStep.RENDER_WAV, 0.88f, "Merender berkas audio WAV 44.1 kHz 16-bit...")
             val renderResult = WavRenderer.render(mixedPcm, outputFile) { subProg, msg ->
-                onProgress(PipelineStep.RENDER_WAV, 0.83f + 0.10f * subProg, "WAV: $msg")
+                onProgress(PipelineStep.RENDER_WAV, 0.88f + 0.07f * subProg, "WAV: $msg")
             }
 
             if (renderResult.isFailure) {
@@ -290,8 +390,8 @@ object AudioMixPipeline {
             }
             val wavFile = renderResult.getOrThrow()
 
-            // 8. Validasi Integritas WAV Menyeluruh
-            onProgress(PipelineStep.VALIDASI, 0.95f, "Memvalidasi struktur header RIFF & audio non-silent...")
+            // 13. Validasi Integritas WAV
+            onProgress(PipelineStep.VALIDASI, 0.96f, "Memvalidasi struktur RIFF WAV & audio non-silent...")
             val validation = WavValidator.validate(wavFile)
             if (!validation.isValid) {
                 if (wavFile.exists()) wavFile.delete()
@@ -302,7 +402,7 @@ object AudioMixPipeline {
             onProgress(
                 PipelineStep.SELESAI,
                 1.0f,
-                "Render WAV berhasil & tervalidasi (${validation.durationMs / 1000} detik)."
+                "Aransemen WAV berhasil & tervalidasi (${validation.durationMs / 1000} detik)."
             )
 
             return@withContext Result.success(
@@ -312,7 +412,8 @@ object AudioMixPipeline {
                     durationMs = validation.durationMs,
                     timeline = timeline,
                     key = musicKey,
-                    targetBpm = targetBpm
+                    targetBpm = targetBpm,
+                    arrangementPlan = arrangementPlan
                 )
             )
         } catch (e: Exception) {

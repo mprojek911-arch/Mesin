@@ -3,14 +3,19 @@ package com.autoremix.djslow.state
 import com.autoremix.djslow.engine.AudioSource
 import com.autoremix.djslow.engine.AudioState
 import com.autoremix.djslow.engine.PlaybackEngineState
+import com.autoremix.djslow.engine.analysis.AutoEnergyAnalyzer
+import com.autoremix.djslow.engine.analysis.BeatContentAnalyzer.BeatContentAnalysis
 import com.autoremix.djslow.engine.analysis.BpmDetector
+import com.autoremix.djslow.engine.arrangement.AutoDjPreset
 import com.autoremix.djslow.engine.mix.MixTrackSettings
 import com.autoremix.djslow.engine.music.Chord
-import com.autoremix.djslow.engine.music.ChordEngine
 import com.autoremix.djslow.engine.music.ChordType
 import com.autoremix.djslow.engine.music.MusicKey
 import com.autoremix.djslow.engine.music.MusicMode
 import com.autoremix.djslow.engine.music.PitchClass
+import com.autoremix.djslow.engine.structure.EnergyCurve
+import com.autoremix.djslow.engine.structure.SongSection
+import com.autoremix.djslow.engine.structure.SongSectionType
 import com.autoremix.djslow.engine.synth.BassPatternType
 import com.autoremix.djslow.engine.synth.ChordSynthPreset
 import com.autoremix.djslow.engine.timeline.MasterTimeline
@@ -20,22 +25,25 @@ import kotlin.math.roundToInt
 
 /**
  * UI State untuk tampilan Beranda AUTO REMIX DJ SLOW:
- * Mendukung Tahap 1 (Pemilihan & Playback), Tahap 2 (Mixing & WAV Render),
- * serta Tahap 3 (BPM, Tangga Nada/Key, Akor & Sintesis Bass).
+ * Tahap 1 (Pemilihan & Playback), Tahap 2 (Mixing & WAV Render),
+ * Tahap 3 (BPM, Key, Chord, Bass), dan Tahap 4 (Drum, Melodi, Pad, Auto DJ Energy & Structure).
  */
 data class UiState(
-    val stageTitle: String = "TAHAP 3 — MUSIK (BPM + KEY + CHORD + BASS)",
+    val stageTitle: String = "TAHAP 4 — ARRANGEMENT (DRUM + MELODY + PAD + DJ STRUCTURE)",
     val vocalSource: AudioSource? = null,
     val beatSource: AudioSource? = null,
     val audioState: AudioState = AudioState(),
-    val statusMessage: String = "Siap. Silakan pilih vokal & beat, lalu klik Analisis.",
+    val statusMessage: String = "Siap. Silakan pilih vokal & beat, lalu klik Analisis & Aransemen.",
     val errorMessage: String? = null,
 
-    // Parameter Mix 4-Trek (Vokal, Beat, Chord, Bass)
+    // Parameter Mixer Multi-Track (Vokal, Beat, Drum, Bass, Chord, Melodi, Pad)
     val vocalMixSettings: MixTrackSettings = MixTrackSettings(volume = 1.0f),
     val beatMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.8f),
-    val chordMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.70f),
+    val drumMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.85f),
     val bassMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.85f),
+    val chordMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.70f),
+    val melodyMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.80f),
+    val padMixSettings: MixTrackSettings = MixTrackSettings(volume = 0.75f),
     val masterGain: Float = 0.90f,
     val isAutoMixEnabled: Boolean = true,
 
@@ -63,7 +71,15 @@ data class UiState(
 
     val masterTimeline: MasterTimeline? = null,
 
-    // Status Analisis Musik
+    // Parameter Aransemen Tahap 4
+    val songSections: List<SongSection> = emptyList(),
+    val currentPreset: AutoDjPreset = AutoDjPreset.DJ_SLOW,
+    val melodySeed: Long = 42L,
+    val beatAnalysis: BeatContentAnalysis? = null,
+    val energyAnalysis: AutoEnergyAnalyzer.EnergyAnalysisResult? = null,
+    val energyCurve: EnergyCurve? = null,
+
+    // Status Analisis Musik & Aransemen
     val isAnalyzing: Boolean = false,
     val analysisProgressFraction: Float = 0.0f,
     val analysisMessage: String = "",
@@ -126,7 +142,7 @@ data class UiState(
             0f
         }
 
-    // Teks Bantuan UI Tahap 3
+    // Teks Bantuan UI
     val vocalBpmText: String
         get() = vocalBpm?.let {
             if (it.isEstimated) "Perkiraan: ${it.bpm.roundToInt()} BPM" else "${it.bpm.roundToInt()} BPM"

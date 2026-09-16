@@ -7,7 +7,11 @@ import androidx.lifecycle.viewModelScope
 import com.autoremix.djslow.engine.AudioDecoder
 import com.autoremix.djslow.engine.AudioPlayer
 import com.autoremix.djslow.engine.AudioSource
+import com.autoremix.djslow.engine.analysis.AutoEnergyAnalyzer
+import com.autoremix.djslow.engine.analysis.BeatContentAnalyzer.BeatContentAnalysis
 import com.autoremix.djslow.engine.analysis.BpmDetector
+import com.autoremix.djslow.engine.arrangement.AutoArranger
+import com.autoremix.djslow.engine.arrangement.AutoDjPreset
 import com.autoremix.djslow.engine.mix.AudioMixPipeline
 import com.autoremix.djslow.engine.mix.MixEngine
 import com.autoremix.djslow.engine.mix.MixTrackSettings
@@ -17,6 +21,8 @@ import com.autoremix.djslow.engine.music.ChordType
 import com.autoremix.djslow.engine.music.MusicKey
 import com.autoremix.djslow.engine.music.MusicMode
 import com.autoremix.djslow.engine.music.PitchClass
+import com.autoremix.djslow.engine.structure.EnergyCurve
+import com.autoremix.djslow.engine.structure.SongSection
 import com.autoremix.djslow.engine.synth.BassEngine
 import com.autoremix.djslow.engine.synth.BassPatternType
 import com.autoremix.djslow.engine.synth.ChordSynthPreset
@@ -31,6 +37,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
+import kotlin.random.Random
 
 class MainViewModel : ViewModel() {
 
@@ -38,18 +45,21 @@ class MainViewModel : ViewModel() {
 
     private val _vocalSource = MutableStateFlow<AudioSource?>(null)
     private val _beatSource = MutableStateFlow<AudioSource?>(null)
-    private val _statusMessage = MutableStateFlow("TAHAP 3 — MUSIK: Silakan pilih vokal & beat, lalu klik Analisis.")
+    private val _statusMessage = MutableStateFlow("TAHAP 4 — ARRANGEMENT: Silakan pilih vokal & beat, lalu klik Analisis & Aransemen.")
     private val _errorMessage = MutableStateFlow<String?>(null)
 
-    // Parameter Mixing 4-Trek
+    // Parameter Mixing Multi-Trek
     private val _vocalMixSettings = MutableStateFlow(MixTrackSettings(volume = 1.0f))
     private val _beatMixSettings = MutableStateFlow(MixTrackSettings(volume = 0.8f))
-    private val _chordMixSettings = MutableStateFlow(MixTrackSettings(volume = 0.70f))
+    private val _drumMixSettings = MutableStateFlow(MixTrackSettings(volume = 0.85f))
     private val _bassMixSettings = MutableStateFlow(MixTrackSettings(volume = 0.85f))
+    private val _chordMixSettings = MutableStateFlow(MixTrackSettings(volume = 0.70f))
+    private val _melodyMixSettings = MutableStateFlow(MixTrackSettings(volume = 0.80f))
+    private val _padMixSettings = MutableStateFlow(MixTrackSettings(volume = 0.75f))
     private val _masterGain = MutableStateFlow(0.90f)
     private val _isAutoMixEnabled = MutableStateFlow(true)
 
-    // Parameter Mesin Musik Tahap 3
+    // Parameter Musik & Harmoni
     private val _vocalBpm = MutableStateFlow<BpmDetector.BpmResult?>(null)
     private val _beatBpm = MutableStateFlow<BpmDetector.BpmResult?>(null)
     private val _targetBpm = MutableStateFlow(80.0f)
@@ -75,7 +85,15 @@ class MainViewModel : ViewModel() {
 
     private val _masterTimeline = MutableStateFlow<MasterTimeline?>(null)
 
-    // Status Analisis Musik
+    // Parameter Aransemen Tahap 4
+    private val _songSections = MutableStateFlow<List<SongSection>>(emptyList())
+    private val _currentPreset = MutableStateFlow(AutoDjPreset.DJ_SLOW)
+    private val _melodySeed = MutableStateFlow(42L)
+    private val _beatAnalysis = MutableStateFlow<BeatContentAnalysis?>(null)
+    private val _energyAnalysis = MutableStateFlow<AutoEnergyAnalyzer.EnergyAnalysisResult?>(null)
+    private val _energyCurve = MutableStateFlow<EnergyCurve?>(null)
+
+    // Status Analisis
     private val _isAnalyzing = MutableStateFlow(false)
     private val _analysisProgressFraction = MutableStateFlow(0.0f)
     private val _analysisMessage = MutableStateFlow("")
@@ -87,29 +105,29 @@ class MainViewModel : ViewModel() {
     private val _renderedWavFile = MutableStateFlow<File?>(null)
     private val _validationResult = MutableStateFlow<WavValidator.ValidationResult?>(null)
 
-    val uiState: StateFlow<UiState> = combine(
-        combine(_vocalSource, _beatSource, audioPlayer.audioState, _statusMessage, _errorMessage) { vocal, beat, audioState, status, error ->
-            Tuple5(vocal, beat, audioState, status, error)
-        },
-        combine(_vocalMixSettings, _beatMixSettings, _chordMixSettings, _bassMixSettings, _masterGain) { vMix, bMix, cMix, bassMix, mGain ->
-            Tuple5(vMix, bMix, cMix, bassMix, mGain)
-        },
-        combine(_isAutoMixEnabled, _vocalBpm, _beatBpm, _targetBpm, _isBpmEstimated) { autoMix, vBpm, bBpm, tBpm, isBpmEst ->
-            Tuple5(autoMix, vBpm, bBpm, tBpm, isBpmEst)
-        },
-        combine(_bpmConfidence, _detectedKey, _isKeyEstimated, _keyConfidence, _chordProgressionSummary) { bpmConf, key, isKeyEst, keyConf, chords ->
-            Tuple5(bpmConf, key, isKeyEst, keyConf, chords)
-        },
-        combine(
-            _isChordEstimated,
-            _chordConfidence,
-            _chordPreset,
-            _bassPattern,
-            _masterTimeline
-        ) { isChordEst, chordConf, preset, pattern, timeline ->
-            Tuple5(isChordEst, chordConf, preset, pattern, timeline)
-        }
-    ) { group1, group2, group3, group4, group5 ->
+    private val group1 = combine(_vocalSource, _beatSource, audioPlayer.audioState, _statusMessage, _errorMessage) { vocal, beat, audioState, status, error ->
+        Tuple5(vocal, beat, audioState, status, error)
+    }
+    private val group2 = combine(_vocalMixSettings, _beatMixSettings, _drumMixSettings, _bassMixSettings, _chordMixSettings) { vMix, bMix, drMix, bassMix, cMix ->
+        Tuple5(vMix, bMix, drMix, bassMix, cMix)
+    }
+    private val group3 = combine(_melodyMixSettings, _padMixSettings, _masterGain, _isAutoMixEnabled, _targetBpm) { melMix, padMix, mGain, autoMix, tBpm ->
+        Tuple5(melMix, padMix, mGain, autoMix, tBpm)
+    }
+    private val group4 = combine(_vocalBpm, _beatBpm, _isBpmEstimated, _bpmConfidence, _detectedKey) { vBpm, bBpm, isBpmEst, bpmConf, key ->
+        Tuple5(vBpm, bBpm, isBpmEst, bpmConf, key)
+    }
+    private val group5 = combine(_isKeyEstimated, _keyConfidence, _chordProgressionSummary, _chordPreset, _bassPattern) { isKeyEst, keyConf, chords, cPreset, bPattern ->
+        Tuple5(isKeyEst, keyConf, chords, cPreset, bPattern)
+    }
+    private val group6 = combine(_songSections, _currentPreset, _melodySeed, _energyCurve, _masterTimeline) { sections, preset, seed, curve, timeline ->
+        Tuple5(sections, preset, seed, curve, timeline)
+    }
+
+    private val group123 = combine(group1, group2, group3) { g1, g2, g3 -> Triple(g1, g2, g3) }
+    private val group456 = combine(group4, group5, group6) { g4, g5, g6 -> Triple(g4, g5, g6) }
+
+    val uiState: StateFlow<UiState> = combine(group123, group456) { (g1, g2, g3), (g4, g5, g6) ->
         val rend = _isRendering.value
         val prog = _renderProgressFraction.value
         val stage = _renderStageText.value
@@ -121,32 +139,39 @@ class MainViewModel : ViewModel() {
         val anaMsg = _analysisMessage.value
 
         UiState(
-            stageTitle = "TAHAP 3 — MUSIK (BPM + KEY + CHORD + BASS)",
-            vocalSource = group1.a,
-            beatSource = group1.b,
-            audioState = group1.c,
-            statusMessage = group1.d,
-            errorMessage = group1.e ?: group1.c.errorMessage,
-            vocalMixSettings = group2.a,
-            beatMixSettings = group2.b,
-            chordMixSettings = group2.c,
-            bassMixSettings = group2.d,
-            masterGain = group2.e,
-            isAutoMixEnabled = group3.a,
-            vocalBpm = group3.b,
-            beatBpm = group3.c,
-            targetBpm = group3.d,
-            isBpmEstimated = group3.e,
-            bpmConfidence = group4.a,
-            detectedKey = group4.b,
-            isKeyEstimated = group4.c,
-            keyConfidence = group4.d,
-            chordProgressionSummary = group4.e,
-            isChordEstimated = group5.a,
-            chordConfidence = group5.b,
-            chordPreset = group5.c,
-            bassPattern = group5.d,
-            masterTimeline = group5.e,
+            stageTitle = "TAHAP 4 — ARRANGEMENT (DRUM + MELODY + PAD + DJ STRUCTURE)",
+            vocalSource = g1.a,
+            beatSource = g1.b,
+            audioState = g1.c,
+            statusMessage = g1.d,
+            errorMessage = g1.e ?: g1.c.errorMessage,
+            vocalMixSettings = g2.a,
+            beatMixSettings = g2.b,
+            drumMixSettings = g2.c,
+            bassMixSettings = g2.d,
+            chordMixSettings = g2.e,
+            melodyMixSettings = g3.a,
+            padMixSettings = g3.b,
+            masterGain = g3.c,
+            isAutoMixEnabled = g3.d,
+            targetBpm = g3.e,
+            vocalBpm = g4.a,
+            beatBpm = g4.b,
+            isBpmEstimated = g4.c,
+            bpmConfidence = g4.d,
+            detectedKey = g4.e,
+            isKeyEstimated = g5.a,
+            keyConfidence = g5.b,
+            chordProgressionSummary = g5.c,
+            chordPreset = g5.d,
+            bassPattern = g5.e,
+            songSections = g6.a,
+            currentPreset = g6.b,
+            melodySeed = g6.c,
+            energyCurve = g6.d,
+            masterTimeline = g6.e,
+            beatAnalysis = _beatAnalysis.value,
+            energyAnalysis = _energyAnalysis.value,
             isAnalyzing = isAna,
             analysisProgressFraction = anaProg,
             analysisMessage = anaMsg,
@@ -163,7 +188,6 @@ class MainViewModel : ViewModel() {
     )
 
     init {
-        // Buat timeline awal dengan nilai default 80 BPM
         rebuildMasterTimeline(80.0f, _detectedKey.value)
     }
 
@@ -246,7 +270,7 @@ class MainViewModel : ViewModel() {
         audioPlayer.seekBeatTo(positionMs)
     }
 
-    // ---- Kontrol Mixing (Tahap 2 & 3) ----
+    // ---- Kontrol Mixing Multi-Trek (Tahap 2, 3, 4) ----
 
     fun onVocalVolumeChange(volume: Float) {
         audioPlayer.setVocalVolume(volume)
@@ -290,18 +314,18 @@ class MainViewModel : ViewModel() {
         _beatMixSettings.value = current.copy(isSolo = !current.isSolo)
     }
 
-    fun onChordMixVolumeChange(volume: Float) {
-        _chordMixSettings.value = _chordMixSettings.value.copy(volume = volume.coerceIn(0.0f, 1.5f))
+    fun onDrumMixVolumeChange(volume: Float) {
+        _drumMixSettings.value = _drumMixSettings.value.copy(volume = volume.coerceIn(0.0f, 1.5f))
     }
 
-    fun onChordMuteToggle() {
-        val current = _chordMixSettings.value
-        _chordMixSettings.value = current.copy(isMuted = !current.isMuted)
+    fun onDrumMuteToggle() {
+        val current = _drumMixSettings.value
+        _drumMixSettings.value = current.copy(isMuted = !current.isMuted)
     }
 
-    fun onChordSoloToggle() {
-        val current = _chordMixSettings.value
-        _chordMixSettings.value = current.copy(isSolo = !current.isSolo)
+    fun onDrumSoloToggle() {
+        val current = _drumMixSettings.value
+        _drumMixSettings.value = current.copy(isSolo = !current.isSolo)
     }
 
     fun onBassMixVolumeChange(volume: Float) {
@@ -318,6 +342,48 @@ class MainViewModel : ViewModel() {
         _bassMixSettings.value = current.copy(isSolo = !current.isSolo)
     }
 
+    fun onChordMixVolumeChange(volume: Float) {
+        _chordMixSettings.value = _chordMixSettings.value.copy(volume = volume.coerceIn(0.0f, 1.5f))
+    }
+
+    fun onChordMuteToggle() {
+        val current = _chordMixSettings.value
+        _chordMixSettings.value = current.copy(isMuted = !current.isMuted)
+    }
+
+    fun onChordSoloToggle() {
+        val current = _chordMixSettings.value
+        _chordMixSettings.value = current.copy(isSolo = !current.isSolo)
+    }
+
+    fun onMelodyMixVolumeChange(volume: Float) {
+        _melodyMixSettings.value = _melodyMixSettings.value.copy(volume = volume.coerceIn(0.0f, 1.5f))
+    }
+
+    fun onMelodyMuteToggle() {
+        val current = _melodyMixSettings.value
+        _melodyMixSettings.value = current.copy(isMuted = !current.isMuted)
+    }
+
+    fun onMelodySoloToggle() {
+        val current = _melodyMixSettings.value
+        _melodyMixSettings.value = current.copy(isSolo = !current.isSolo)
+    }
+
+    fun onPadMixVolumeChange(volume: Float) {
+        _padMixSettings.value = _padMixSettings.value.copy(volume = volume.coerceIn(0.0f, 1.5f))
+    }
+
+    fun onPadMuteToggle() {
+        val current = _padMixSettings.value
+        _padMixSettings.value = current.copy(isMuted = !current.isMuted)
+    }
+
+    fun onPadSoloToggle() {
+        val current = _padMixSettings.value
+        _padMixSettings.value = current.copy(isSolo = !current.isSolo)
+    }
+
     fun onMasterGainChange(gain: Float) {
         _masterGain.value = gain.coerceIn(0.0f, 1.5f)
     }
@@ -326,7 +392,22 @@ class MainViewModel : ViewModel() {
         _isAutoMixEnabled.value = !_isAutoMixEnabled.value
     }
 
-    // ---- Mesin Musik & Analisis (Tahap 3) ----
+    // ---- Kontrol Aransemen Tahap 4 ----
+
+    fun onPresetChanged(preset: AutoDjPreset) {
+        _currentPreset.value = preset
+        _targetBpm.value = preset.defaultBpm
+        rebuildMasterTimeline(preset.defaultBpm, _detectedKey.value)
+        _statusMessage.value = "Preset diubah ke ${preset.label} (${preset.defaultBpm.roundToInt()} BPM)."
+    }
+
+    fun onRegenerateMelodySeed() {
+        val newSeed = Random.nextLong(1, 999999)
+        _melodySeed.value = newSeed
+        _statusMessage.value = "Melodi baru dibuat (Seed #$newSeed). Karakter melodi disegarkan."
+    }
+
+    // ---- Analisis Musik & Struktur Lagu (Tahap 3 & 4) ----
 
     fun onAnalyzeTracks(context: Context) {
         val vocal = _vocalSource.value
@@ -341,15 +422,19 @@ class MainViewModel : ViewModel() {
 
         _isAnalyzing.value = true
         _analysisProgressFraction.value = 0.05f
-        _analysisMessage.value = "Memulai analisis audio DSP..."
+        _analysisMessage.value = "Memulai analisis audio & deteksi struktur..."
         _errorMessage.value = null
-        _statusMessage.value = "Menganalisis BPM, Tangga Nada & Progresi Akor..."
+        _statusMessage.value = "Menganalisis BPM, Tangga Nada, Energi & Seksi Lagu..."
 
         viewModelScope.launch {
             val result = AudioMixPipeline.analyzeAudio(
                 context = context,
                 vocalUri = vocal?.uri,
                 beatUri = beat?.uri,
+                manualBpm = null,
+                manualKey = null,
+                preset = _currentPreset.value,
+                melodySeed = _melodySeed.value,
                 onProgress = { progress, message ->
                     _analysisProgressFraction.value = progress
                     _analysisMessage.value = message
@@ -375,7 +460,14 @@ class MainViewModel : ViewModel() {
 
                 _masterTimeline.value = analysis.timeline
 
-                _statusMessage.value = "Analisis selesai: Target ${analysis.targetBpm.roundToInt()} BPM, ${analysis.key.displayName}, Akor: ${analysis.chordProgression.displayProgression}"
+                analysis.arrangementPlan?.let { plan ->
+                    _songSections.value = plan.sections
+                    _energyCurve.value = plan.energyCurve
+                    _beatAnalysis.value = plan.beatAnalysis
+                    _energyAnalysis.value = plan.energyAnalysis
+                }
+
+                _statusMessage.value = "Analisis selesai: ${analysis.targetBpm.roundToInt()} BPM, ${analysis.key.displayName}, ${_songSections.value.size} Seksi Lagu terdeteksi."
             }.onFailure { ex ->
                 _errorMessage.value = "Analisis audio gagal: ${ex.message}"
                 _statusMessage.value = "Analisis gagal. Silakan coba lagi."
@@ -383,7 +475,7 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    // Kontrol BPM Manual (Section 3: WAJIB rebuild Master Timeline, Beat Grid, Bar, Chord timing, Bass timing)
+    // Kontrol BPM Manual
 
     fun onBpmIncrement() {
         val next = (_targetBpm.value + 1.0f).coerceIn(60.0f, 140.0f)
@@ -412,7 +504,7 @@ class MainViewModel : ViewModel() {
         _statusMessage.value = "BPM disesuaikan ke ${newBpm.roundToInt()} BPM. Timeline & ritme diperbarui."
     }
 
-    // Kontrol Key Manual (Section 5: WAJIB rebuild Chord, Bass, Generated Music)
+    // Kontrol Tangga Nada (Key) Manual
 
     fun onKeySelected(pitchClass: PitchClass, mode: MusicMode) {
         val newKey = MusicKey(pitchClass, mode, 1.0f)
@@ -457,7 +549,7 @@ class MainViewModel : ViewModel() {
         _masterTimeline.value = timeline
     }
 
-    // ---- Render WAV Pipeline Latar Belakang (Tahap 2 & 3) ----
+    // ---- Render WAV Pipeline Latar Belakang (Tahap 4) ----
 
     fun startMixAndRender(context: Context) {
         val vocal = _vocalSource.value
@@ -472,15 +564,18 @@ class MainViewModel : ViewModel() {
 
         _isRendering.value = true
         _renderProgressFraction.value = 0.0f
-        _renderStageText.value = "Mempersiapkan pipeline..."
+        _renderStageText.value = "Mempersiapkan pipeline aransemen..."
         _errorMessage.value = null
-        _statusMessage.value = "Memulai proses rendering WAV 4-trek (Vokal, Beat, Chord, Bass)..."
+        _statusMessage.value = "Memulai proses rendering aransemen lengkap..."
 
         val params = MixEngine.MixParams(
             vocalSettings = _vocalMixSettings.value,
             beatSettings = _beatMixSettings.value,
-            chordSettings = _chordMixSettings.value,
+            drumSettings = _drumMixSettings.value,
             bassSettings = _bassMixSettings.value,
+            chordSettings = _chordMixSettings.value,
+            melodySettings = _melodyMixSettings.value,
+            padSettings = _padMixSettings.value,
             masterGain = _masterGain.value,
             isAutoMixEnabled = _isAutoMixEnabled.value
         )
@@ -494,6 +589,8 @@ class MainViewModel : ViewModel() {
                 musicKey = _detectedKey.value,
                 chordPreset = _chordPreset.value,
                 bassPattern = _bassPattern.value,
+                preset = _currentPreset.value,
+                melodySeed = _melodySeed.value,
                 params = params
             ) { step, progressFraction, message ->
                 _renderProgressFraction.value = progressFraction
@@ -507,9 +604,12 @@ class MainViewModel : ViewModel() {
                 _renderedWavFile.value = pipelineResult.wavFile
                 _validationResult.value = pipelineResult.validation
                 _masterTimeline.value = pipelineResult.timeline
-                _statusMessage.value = "WAV 4-TREK BERHASIL DIBUAT & TERVALIDASI (${pipelineResult.durationMs / 1000} detik)."
+                pipelineResult.arrangementPlan?.let { plan ->
+                    _songSections.value = plan.sections
+                    _energyCurve.value = plan.energyCurve
+                }
+                _statusMessage.value = "ARANSEMEN WAV LENGKAP BERHASIL DIBUAT & TERVALIDASI (${pipelineResult.durationMs / 1000} detik)."
 
-                // Muat ke audio player hasil render
                 val loadWav = audioPlayer.setRenderedWav(pipelineResult.wavFile)
                 if (loadWav.isFailure) {
                     _errorMessage.value = "Rendering berhasil tetapi berkas gagal dimuat ke pemutar."

@@ -71,6 +71,7 @@ import com.autoremix.djslow.engine.AudioSource
 import com.autoremix.djslow.engine.BeatTrackState
 import com.autoremix.djslow.engine.PlaybackEngineState
 import com.autoremix.djslow.engine.VocalTrackState
+import com.autoremix.djslow.ui.components.ArrangementCard
 import com.autoremix.djslow.ui.components.MusicEngineCard
 import com.autoremix.djslow.viewmodel.MainViewModel
 import com.example.ui.theme.NeonAmber
@@ -174,7 +175,7 @@ fun MainScreen(
                             }
                         }
 
-                        // Badge Tahap 3
+                        // Badge Tahap 4
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
@@ -182,7 +183,7 @@ fun MainScreen(
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                text = "TAHAP 3: MUSIK",
+                                text = "TAHAP 4: ARANSEMEN",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = NeonPurple
@@ -586,6 +587,15 @@ fun MainScreen(
             )
 
             // ==========================================
+            // MESIN ARANSEMEN TAHAP 4 (DRUM + MELODY + PAD + DJ STRUCTURE)
+            // ==========================================
+            ArrangementCard(
+                uiState = uiState,
+                onPresetChanged = { viewModel.onPresetChanged(it) },
+                onRegenerateMelodySeed = { viewModel.onRegenerateMelodySeed() }
+            )
+
+            // ==========================================
             // MIX ENGINE & MASTER BUS (4-TRACK MIXING)
             // ==========================================
             Card(
@@ -615,13 +625,13 @@ fun MainScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "🎚️ MIX ENGINE 4-TREK & MASTER BUS",
+                                text = "🎚️ MIX ENGINE MULTI-TREK & MASTER BUS",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
                             )
                             Text(
-                                text = "PCM Float32 (44.1 kHz) • Vokal, Beat, Akor, Bass • Auto Mix Dominan",
+                                text = "PCM Float32 (44.1 kHz) • Vokal, Beat, Drum, Bass, Akor, Melodi, Pad • Auto Mix",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TextMuted
                             )
@@ -641,9 +651,9 @@ fun MainScreen(
                         testTagPrefix = "vocal"
                     )
 
-                    // 2. Track Mixer: 🥁 BEAT
+                    // 2. Track Mixer: 🥁 BEAT SUMBER
                     TrackMixerRow(
-                        trackName = "🥁 BEAT",
+                        trackName = "🥁 BEAT SUMBER",
                         accentColor = TrackBeatColor,
                         volume = uiState.beatMixSettings.volume,
                         isMuted = uiState.beatMixSettings.isMuted,
@@ -654,7 +664,33 @@ fun MainScreen(
                         testTagPrefix = "beat"
                     )
 
-                    // 3. Track Mixer: 🎹 AKOR SYNTH
+                    // 3. Track Mixer: 💥 DRUM SYNTH
+                    TrackMixerRow(
+                        trackName = "💥 DRUM SYNTH (DJ Slow)",
+                        accentColor = NeonAmber,
+                        volume = uiState.drumMixSettings.volume,
+                        isMuted = uiState.drumMixSettings.isMuted,
+                        isSolo = uiState.drumMixSettings.isSolo,
+                        onVolumeChange = { viewModel.onDrumMixVolumeChange(it) },
+                        onMuteToggle = { viewModel.onDrumMuteToggle() },
+                        onSoloToggle = { viewModel.onDrumSoloToggle() },
+                        testTagPrefix = "drum"
+                    )
+
+                    // 4. Track Mixer: 🎸 SUB-BASS (Sidechained)
+                    TrackMixerRow(
+                        trackName = "🎸 SUB-BASS (Sidechained)",
+                        accentColor = Color(0xFFFF5252),
+                        volume = uiState.bassMixSettings.volume,
+                        isMuted = uiState.bassMixSettings.isMuted,
+                        isSolo = uiState.bassMixSettings.isSolo,
+                        onVolumeChange = { viewModel.onBassMixVolumeChange(it) },
+                        onMuteToggle = { viewModel.onBassMuteToggle() },
+                        onSoloToggle = { viewModel.onBassSoloToggle() },
+                        testTagPrefix = "bass"
+                    )
+
+                    // 5. Track Mixer: 🎹 AKOR SYNTH
                     TrackMixerRow(
                         trackName = "🎹 AKOR SYNTH",
                         accentColor = NeonPurple,
@@ -667,17 +703,30 @@ fun MainScreen(
                         testTagPrefix = "chord"
                     )
 
-                    // 4. Track Mixer: 🎸 BASS SYNTH
+                    // 6. Track Mixer: 🎺 MELODI HOOK
                     TrackMixerRow(
-                        trackName = "🎸 BASS SYNTH",
-                        accentColor = NeonAmber,
-                        volume = uiState.bassMixSettings.volume,
-                        isMuted = uiState.bassMixSettings.isMuted,
-                        isSolo = uiState.bassMixSettings.isSolo,
-                        onVolumeChange = { viewModel.onBassMixVolumeChange(it) },
-                        onMuteToggle = { viewModel.onBassMuteToggle() },
-                        onSoloToggle = { viewModel.onBassSoloToggle() },
-                        testTagPrefix = "bass"
+                        trackName = "🎺 MELODI HOOK",
+                        accentColor = NeonPink,
+                        volume = uiState.melodyMixSettings.volume,
+                        isMuted = uiState.melodyMixSettings.isMuted,
+                        isSolo = uiState.melodyMixSettings.isSolo,
+                        onVolumeChange = { viewModel.onMelodyMixVolumeChange(it) },
+                        onMuteToggle = { viewModel.onMelodyMuteToggle() },
+                        onSoloToggle = { viewModel.onMelodySoloToggle() },
+                        testTagPrefix = "melody"
+                    )
+
+                    // 7. Track Mixer: 🌊 PAD ATMOSFIR
+                    TrackMixerRow(
+                        trackName = "🌊 PAD ATMOSFIR",
+                        accentColor = NeonCyan,
+                        volume = uiState.padMixSettings.volume,
+                        isMuted = uiState.padMixSettings.isMuted,
+                        isSolo = uiState.padMixSettings.isSolo,
+                        onVolumeChange = { viewModel.onPadMixVolumeChange(it) },
+                        onMuteToggle = { viewModel.onPadMuteToggle() },
+                        onSoloToggle = { viewModel.onPadSoloToggle() },
+                        testTagPrefix = "pad"
                     )
 
                     // --- Master Bus Controls ---
@@ -772,7 +821,7 @@ fun MainScreen(
                         Icon(imageVector = Icons.Default.Save, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (uiState.isRendering) "SEDANG MERENDER WAV 4-TREK..." else "💾 SIMPAN & RENDER WAV (4-TREK)",
+                            text = if (uiState.isRendering) "SEDANG MERENDER ARANSEMEN LENGKAP..." else "💾 SIMPAN & RENDER ARANSEMEN (WAV)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )

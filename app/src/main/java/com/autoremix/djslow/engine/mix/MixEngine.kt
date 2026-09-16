@@ -4,10 +4,12 @@ import com.autoremix.djslow.engine.pcm.AudioPcmData
 import kotlin.math.abs
 
 /**
- * Mix Engine untuk menggabungkan trek Vokal, Beat, Akor Synth, dan Bass Synth ke Master Bus.
+ * Mix Engine untuk menggabungkan trek:
+ * Vokal, Beat, Drum Synth, Bass Synth, Akor Synth, Melodi Synth, Pad Synth, dan FX Transisi.
+ *
  * Fitur:
- * - Volume, Mute, Solo untuk setiap trek (Vokal, Beat, Chord, Bass)
- * - Auto Mix cerdas: Vokal dominan, elemen musik (Beat, Chord, Bass) disesuaikan seimbang
+ * - Kontrol gain, mute, solo independen
+ * - Auto Mix cerdas (Vokal dibuat dominan di depan, instrumen diselaraskan)
  * - Master Gain & Peak Limiting dengan headroom aman (0.95f / -0.5 dB untuk mencegah clipping)
  */
 object MixEngine {
@@ -16,84 +18,112 @@ object MixEngine {
 
     data class MixParams(
         val vocalSettings: MixTrackSettings = MixTrackSettings(volume = 1.0f),
-        val beatSettings: MixTrackSettings = MixTrackSettings(volume = 0.8f),
-        val chordSettings: MixTrackSettings = MixTrackSettings(volume = 0.70f),
+        val beatSettings: MixTrackSettings = MixTrackSettings(volume = 0.80f),
+        val drumSettings: MixTrackSettings = MixTrackSettings(volume = 0.85f),
         val bassSettings: MixTrackSettings = MixTrackSettings(volume = 0.85f),
+        val chordSettings: MixTrackSettings = MixTrackSettings(volume = 0.70f),
+        val melodySettings: MixTrackSettings = MixTrackSettings(volume = 0.80f),
+        val padSettings: MixTrackSettings = MixTrackSettings(volume = 0.75f),
         val masterGain: Float = 0.90f,
         val isAutoMixEnabled: Boolean = true
     )
 
     /**
-     * Melakukan mixing antara buffer Vokal, Beat, Chord Synth, dan Bass Synth PCM.
+     * Melakukan mixing antara seluruh layer audio PCM ke stereo Float32.
      */
     fun mix(
         vocalPcm: AudioPcmData?,
         beatPcm: AudioPcmData?,
         chordPcm: AudioPcmData? = null,
         bassPcm: AudioPcmData? = null,
+        drumPcm: AudioPcmData? = null,
+        melodyPcm: AudioPcmData? = null,
+        padPcm: AudioPcmData? = null,
+        transitionPcm: AudioPcmData? = null,
         params: MixParams = MixParams(),
         onProgress: ((Float, String) -> Unit)? = null
     ): Result<AudioPcmData> {
-        if (vocalPcm == null && beatPcm == null && chordPcm == null && bassPcm == null) {
+        val hasAny = vocalPcm != null || beatPcm != null || chordPcm != null ||
+                bassPcm != null || drumPcm != null || melodyPcm != null ||
+                padPcm != null || transitionPcm != null
+
+        if (!hasAny) {
             return Result.failure(IllegalArgumentException("Tidak ada trek audio untuk di-mix."))
         }
 
-        onProgress?.invoke(0.05f, "Menghitung parameter mixing 4-track...")
+        onProgress?.invoke(0.05f, "Menghitung parameter mixing multi-track...")
 
-        // Evaluasi status Solo global
         val isAnySolo = params.vocalSettings.isSolo ||
                 params.beatSettings.isSolo ||
+                params.drumSettings.isSolo ||
+                params.bassSettings.isSolo ||
                 params.chordSettings.isSolo ||
-                params.bassSettings.isSolo
+                params.melodySettings.isSolo ||
+                params.padSettings.isSolo
 
         var vocalGain = params.vocalSettings.computeEffectiveGain(isAnySolo)
         var beatGain = params.beatSettings.computeEffectiveGain(isAnySolo)
-        var chordGain = params.chordSettings.computeEffectiveGain(isAnySolo)
+        var drumGain = params.drumSettings.computeEffectiveGain(isAnySolo)
         var bassGain = params.bassSettings.computeEffectiveGain(isAnySolo)
+        var chordGain = params.chordSettings.computeEffectiveGain(isAnySolo)
+        var melodyGain = params.melodySettings.computeEffectiveGain(isAnySolo)
+        var padGain = params.padSettings.computeEffectiveGain(isAnySolo)
+        val transitionGain = if (isAnySolo) 0.0f else 0.80f
 
-        // Terapkan Auto Mix jika diaktifkan: Vokal dibuat dominan, musik pengiring diseimbangkan
-        if (params.isAutoMixEnabled) {
-            val totalAccompanimentGain = beatGain + chordGain + bassGain
-            if (vocalGain > 0.0f && totalAccompanimentGain > 0.0f) {
-                // Skala musik pengiring agar vokal tetap jernih dan vokal berdiri di depan
-                val maxAccompaniment = vocalGain * 1.25f
-                if (totalAccompanimentGain > maxAccompaniment) {
-                    val scale = maxAccompaniment / totalAccompanimentGain
+        // Auto Mix cerdas: vokal tetap menonjol dan tidak tertutup tumpukan layer
+        if (params.isAutoMixEnabled && vocalGain > 0.0f) {
+            val totalAccompaniment = beatGain + drumGain + bassGain + chordGain + melodyGain + padGain
+            if (totalAccompaniment > 0.0f) {
+                val maxAccompaniment = vocalGain * 1.6f
+                if (totalAccompaniment > maxAccompaniment) {
+                    val scale = maxAccompaniment / totalAccompaniment
                     beatGain *= scale
-                    chordGain *= scale
+                    drumGain *= scale
                     bassGain *= scale
+                    chordGain *= scale
+                    melodyGain *= scale
+                    padGain *= scale
                 }
             }
         }
 
-        val vocalFrames = vocalPcm?.totalFrames ?: 0
-        val beatFrames = beatPcm?.totalFrames ?: 0
-        val chordFrames = chordPcm?.totalFrames ?: 0
-        val bassFrames = bassPcm?.totalFrames ?: 0
-        val totalFrames = maxOf(vocalFrames, beatFrames, chordFrames, bassFrames)
+        val totalFrames = maxOf(
+            vocalPcm?.totalFrames ?: 0,
+            beatPcm?.totalFrames ?: 0,
+            chordPcm?.totalFrames ?: 0,
+            bassPcm?.totalFrames ?: 0,
+            drumPcm?.totalFrames ?: 0,
+            melodyPcm?.totalFrames ?: 0,
+            padPcm?.totalFrames ?: 0,
+            transitionPcm?.totalFrames ?: 0
+        )
 
         if (totalFrames <= 0) {
             return Result.failure(IllegalStateException("Durasi audio tidak valid untuk di-mix."))
         }
 
         val channels = 2
-        val mixedSamples = FloatArray(totalFrames * channels)
+        val mixedSamples = FloatArray((totalFrames * channels).toInt())
         val vocalSamples = vocalPcm?.samples
         val beatSamples = beatPcm?.samples
         val chordSamples = chordPcm?.samples
         val bassSamples = bassPcm?.samples
+        val drumSamples = drumPcm?.samples
+        val melodySamples = melodyPcm?.samples
+        val padSamples = padPcm?.samples
+        val transSamples = transitionPcm?.samples
 
         val masterGain = params.masterGain.coerceIn(0.0f, 1.5f)
 
-        onProgress?.invoke(0.20f, "Menggabungkan sinyal audio Vokal, Beat, Chord & Bass...")
+        onProgress?.invoke(0.20f, "Menggabungkan sinyal audio seluruh trek instrumen...")
 
         var maxPeakBeforeLimit = 0.0f
-        val chunkSize = 44100 // Lapor progres berkala tiap ~1 detik audio
+        val chunkSize = 44100
         var framesProcessed = 0
 
         for (f in 0 until totalFrames) {
-            val iL = f * 2
-            val iR = f * 2 + 1
+            val iL = (f * 2).toInt()
+            val iR = (f * 2 + 1).toInt()
 
             val vL = if (vocalSamples != null && iL < vocalSamples.size) vocalSamples[iL] else 0.0f
             val vR = if (vocalSamples != null && iR < vocalSamples.size) vocalSamples[iR] else 0.0f
@@ -101,14 +131,41 @@ object MixEngine {
             val bL = if (beatSamples != null && iL < beatSamples.size) beatSamples[iL] else 0.0f
             val bR = if (beatSamples != null && iR < beatSamples.size) beatSamples[iR] else 0.0f
 
-            val cL = if (chordSamples != null && iL < chordSamples.size) chordSamples[iL] else 0.0f
-            val cR = if (chordSamples != null && iR < chordSamples.size) chordSamples[iR] else 0.0f
+            val drL = if (drumSamples != null && iL < drumSamples.size) drumSamples[iL] else 0.0f
+            val drR = if (drumSamples != null && iR < drumSamples.size) drumSamples[iR] else 0.0f
 
             val bassL = if (bassSamples != null && iL < bassSamples.size) bassSamples[iL] else 0.0f
             val bassR = if (bassSamples != null && iR < bassSamples.size) bassSamples[iR] else 0.0f
 
-            val mixedL = (vL * vocalGain + bL * beatGain + cL * chordGain + bassL * bassGain) * masterGain
-            val mixedR = (vR * vocalGain + bR * beatGain + cR * chordGain + bassR * bassGain) * masterGain
+            val cL = if (chordSamples != null && iL < chordSamples.size) chordSamples[iL] else 0.0f
+            val cR = if (chordSamples != null && iR < chordSamples.size) chordSamples[iR] else 0.0f
+
+            val mL = if (melodySamples != null && iL < melodySamples.size) melodySamples[iL] else 0.0f
+            val mR = if (melodySamples != null && iR < melodySamples.size) melodySamples[iR] else 0.0f
+
+            val pL = if (padSamples != null && iL < padSamples.size) padSamples[iL] else 0.0f
+            val pR = if (padSamples != null && iR < padSamples.size) padSamples[iR] else 0.0f
+
+            val tL = if (transSamples != null && iL < transSamples.size) transSamples[iL] else 0.0f
+            val tR = if (transSamples != null && iR < transSamples.size) transSamples[iR] else 0.0f
+
+            val mixedL = (vL * vocalGain +
+                    bL * beatGain +
+                    drL * drumGain +
+                    bassL * bassGain +
+                    cL * chordGain +
+                    mL * melodyGain +
+                    pL * padGain +
+                    tL * transitionGain) * masterGain
+
+            val mixedR = (vR * vocalGain +
+                    bR * beatGain +
+                    drR * drumGain +
+                    bassR * bassGain +
+                    cR * chordGain +
+                    mR * melodyGain +
+                    pR * padGain +
+                    tR * transitionGain) * masterGain
 
             mixedSamples[iL] = mixedL
             mixedSamples[iR] = mixedR
@@ -121,27 +178,25 @@ object MixEngine {
             framesProcessed++
             if (framesProcessed % chunkSize == 0) {
                 val progress = 0.20f + 0.55f * (framesProcessed.toFloat() / totalFrames.toFloat())
-                onProgress?.invoke(progress, "Proses mixing PCM Float32...")
+                onProgress?.invoke(progress, "Proses mixing multi-track PCM Float32...")
             }
         }
 
-        onProgress?.invoke(0.80f, "Pemeriksaan peak & proteksi headroom limiting...")
+        onProgress?.invoke(0.80f, "Pemeriksaan peak & proteksi headroom limiting (-0.5 dB)...")
 
-        // Headroom / Peak Normalization: Jika level terlalu tinggi, turunkan gain agar tidak terjadi clipping
         if (maxPeakBeforeLimit > SAFE_HEADROOM_PEAK) {
             val attenuation = SAFE_HEADROOM_PEAK / maxPeakBeforeLimit
             for (i in mixedSamples.indices) {
-                mixedSamples[i] = (mixedSamples[i] * attenuation).coerceIn(-1.0f, 1.0f)
+                mixedSamples[i] = (mixedSamples[i] * attenuation).coerceIn(-SAFE_HEADROOM_PEAK, SAFE_HEADROOM_PEAK)
             }
         } else {
-            // Safety clamp
             for (i in mixedSamples.indices) {
                 if (mixedSamples[i] > 1.0f) mixedSamples[i] = 1.0f
                 else if (mixedSamples[i] < -1.0f) mixedSamples[i] = -1.0f
             }
         }
 
-        onProgress?.invoke(1.0f, "Mixing selesai. Headroom aman.")
+        onProgress?.invoke(1.0f, "Mixing selesai. Headroom aman & bebas clipping.")
 
         val resultPcm = AudioPcmData(
             samples = mixedSamples,
