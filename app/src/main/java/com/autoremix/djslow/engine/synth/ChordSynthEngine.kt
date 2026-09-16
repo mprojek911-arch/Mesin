@@ -49,7 +49,9 @@ enum class ChordSynthPreset(
         secondaryDetuneCents = 3.0f,
         adsr = AdsrParams(attackSeconds = 0.03f, decaySeconds = 0.30f, sustainLevel = 0.55f, releaseSeconds = 0.20f),
         octave = 4
-    )
+    );
+
+    val displayName: String get() = label
 }
 
 /**

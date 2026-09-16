@@ -20,7 +20,9 @@ enum class BassPatternType(val label: String, val description: String) {
     ROOT_FIFTH("Root + Fifth", "Variasi nada dasar dan nada kelima bergantian"),
     OCTAVE("Octave Jump", "Lompatan oktaf rendah ke tinggi memberi dinamika ritmik"),
     PASSING_NOTE("Passing Note", "Nada transisi tangga nada yang menyambung mulus ke akor berikutnya"),
-    SYNCOPATED("Syncopated Funk", "Pola ketukan gantung di antara hit beat")
+    SYNCOPATED("Syncopated Funk", "Pola ketukan gantung di antara hit beat");
+
+    val displayName: String get() = label
 }
 
 /**

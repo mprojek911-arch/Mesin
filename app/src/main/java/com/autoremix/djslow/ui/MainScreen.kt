@@ -525,6 +525,64 @@ fun MainScreen(
             }
 
             // ==========================================
+            // SELECTOR MODE PENGGUNA: MODE CEPAT vs MODE STUDIO
+            // ==========================================
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("mode_selector_card"),
+                colors = CardDefaults.cardColors(containerColor = StudioCardBg),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val isQuick = uiState.isQuickMode
+                    Button(
+                        onClick = { if (!isQuick) viewModel.onToggleQuickMode() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .testTag("mode_cepat_tab"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isQuick) NeonCyan else Color.Transparent,
+                            contentColor = if (isQuick) Color.Black else TextPrimary
+                        )
+                    ) {
+                        Text("⚡ MODE CEPAT (INSTAN)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = { if (isQuick) viewModel.onToggleQuickMode() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .testTag("mode_studio_tab"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (!isQuick) NeonPurple else Color.Transparent,
+                            contentColor = if (!isQuick) Color.White else TextPrimary
+                        )
+                    ) {
+                        Text("🎛️ MODE STUDIO (ADVANCED)", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            if (uiState.isQuickMode) {
+                // TAMPILAN MODE CEPAT (INSTAN)
+                QuickModeCard(
+                    uiState = uiState,
+                    viewModel = viewModel,
+                    context = context
+                )
+            } else {
+                // TAMPILAN MODE STUDIO (DETAIL & ADVANCED)
+            // ==========================================
             // 3. [ 🔍 ANALISIS AUDIO NYATA ] (Tahap 3)
             // ==========================================
             Button(
@@ -1209,6 +1267,7 @@ fun MainScreen(
                     )
                 }
             }
+            } // Tutup blok else untuk Mode Studio
         }
     }
 }

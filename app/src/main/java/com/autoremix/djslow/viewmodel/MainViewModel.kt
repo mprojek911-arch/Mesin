@@ -134,6 +134,18 @@ class MainViewModel : ViewModel() {
     private val _hasSavedProject = MutableStateFlow(false)
     private val _exportSuccessMessage = MutableStateFlow<String?>(null)
 
+    // Intelligent Remix Engine (Arsitektur 10 Mesin Inti)
+    private val _isQuickMode = MutableStateFlow(true)
+    private val _remixStyle = MutableStateFlow(com.autoremix.djslow.engine.core.RemixBrain.RemixStyle.DJ_SLOW)
+    private val _energyPreference = MutableStateFlow(com.autoremix.djslow.engine.core.RemixBrain.EnergyPreference.MEDIUM)
+    private val _focusPreference = MutableStateFlow(com.autoremix.djslow.engine.core.RemixBrain.FocusPreference.BALANCED)
+    private val _remixSeed = MutableStateFlow(System.currentTimeMillis())
+    private val _musicAnalysis = MutableStateFlow<com.autoremix.djslow.engine.core.MusicUnderstandingEngine.MusicAnalysis?>(null)
+    private val _remixPlan = MutableStateFlow<com.autoremix.djslow.engine.core.RemixBrain.RemixPlan?>(null)
+    private val _outputStatus = MutableStateFlow(com.autoremix.djslow.engine.core.OutputEngine.OutputStatus.IDLE)
+    private val _isGeneratingPreview30s = MutableStateFlow(false)
+    private val _preview30sFile = MutableStateFlow<File?>(null)
+
     private var renderJob: kotlinx.coroutines.Job? = null
 
     private val group1 = combine(_vocalSource, _beatSource, audioPlayer.audioState, _statusMessage, _errorMessage) { vocal, beat, audioState, status, error ->
@@ -160,11 +172,31 @@ class MainViewModel : ViewModel() {
     private val group8 = combine(_exportedWavFile, _exportedMp3File, _isMp3Supported, _currentAbMode, _isLoudnessMatchingEnabled) { expWav, expMp3, mp3Sup, abMode, lMatch ->
         Tuple5(expWav, expMp3, mp3Sup, abMode, lMatch)
     }
+    private val group9 = combine(_isQuickMode, _remixStyle, _energyPreference, _focusPreference, _remixSeed) { qMode, rStyle, ePref, fPref, rSeed ->
+        Tuple5(qMode, rStyle, ePref, fPref, rSeed)
+    }
 
     private val group123 = combine(group1, group2, group3) { g1, g2, g3 -> Triple(g1, g2, g3) }
     private val group4567 = combine(group4, group5, group6, group7) { g4, g5, g6, g7 -> Quad(g4, g5, g6, g7) }
+    private val group89 = combine(group8, group9, _musicBusSettings, _targetBpm) { g8, g9, musicBus, tBpm ->
+        Quad(g8, g9, musicBus, tBpm)
+    }
 
-    val uiState: StateFlow<UiState> = combine(group123, group4567, group8, _musicBusSettings, _targetBpm) { (g1, g2, g3), (g4, g5, g6, g7), g8, musicBus, tBpm ->
+    val uiState: StateFlow<UiState> = combine(group123, group4567, group89) { g123, g4567, g89 ->
+        val g1 = g123.first
+        val g2 = g123.second
+        val g3 = g123.third
+
+        val g4 = g4567.a
+        val g5 = g4567.b
+        val g6 = g4567.c
+        val g7 = g4567.d
+
+        val g8 = g89.a
+        val g9 = g89.b
+        val musicBus = g89.c
+        val tBpm = g89.d
+
         val rend = _isRendering.value
         val prog = _renderProgressFraction.value
         val stage = _renderStageText.value
@@ -177,7 +209,7 @@ class MainViewModel : ViewModel() {
         val anaMsg = _analysisMessage.value
 
         UiState(
-            stageTitle = "TAHAP 6 FINAL — WAV, MP3, A/B PREVIEW & BATALKAN RENDER",
+            stageTitle = "AUTO REMIX DJ SLOW — INTELLIGENT REMIX ENGINE",
             vocalSource = g1.a,
             beatSource = g1.b,
             audioState = g1.c,
@@ -233,7 +265,17 @@ class MainViewModel : ViewModel() {
             isLoudnessMatchingEnabled = g8.e,
             unmasteredLufs = _unmasteredLufs.value,
             hasSavedProject = _hasSavedProject.value,
-            exportSuccessMessage = _exportSuccessMessage.value
+            exportSuccessMessage = _exportSuccessMessage.value,
+            isQuickMode = g9.a,
+            remixStyle = g9.b,
+            energyPreference = g9.c,
+            focusPreference = g9.d,
+            remixSeed = g9.e,
+            musicAnalysis = _musicAnalysis.value,
+            remixPlan = _remixPlan.value,
+            outputStatus = _outputStatus.value,
+            isGeneratingPreview30s = _isGeneratingPreview30s.value,
+            preview30sFile = _preview30sFile.value
         )
     }.stateIn(
         scope = viewModelScope,
@@ -735,6 +777,187 @@ class MainViewModel : ViewModel() {
             _renderStageText.value = ""
             _statusMessage.value = "Render dibatalkan. Kembali ke status siap."
         }
+    }
+
+    // =========================================================================
+    // INTELLIGENT REMIX ENGINE (ALUR 10 MESIN INTI, 2 MODE PENGGUNA, SEED SYSTEM)
+    // =========================================================================
+
+    fun onToggleQuickMode() {
+        _isQuickMode.value = !_isQuickMode.value
+    }
+
+    fun onStyleSelected(style: com.autoremix.djslow.engine.core.RemixBrain.RemixStyle) {
+        _remixStyle.value = style
+        _currentPreset.value = style.legacyPreset
+        _targetBpm.value = style.recommendedBpmRange.start
+        _statusMessage.value = "Gaya remix dipilih: ${style.label} (${style.description})"
+    }
+
+    fun onEnergyPreferenceSelected(energy: com.autoremix.djslow.engine.core.RemixBrain.EnergyPreference) {
+        _energyPreference.value = energy
+        _statusMessage.value = "Preferensi energi: ${energy.label}"
+    }
+
+    fun onFocusPreferenceSelected(focus: com.autoremix.djslow.engine.core.RemixBrain.FocusPreference) {
+        _focusPreference.value = focus
+        _statusMessage.value = "Fokus remix: ${focus.label}"
+    }
+
+    /**
+     * ONE-CLICK AUTO REMIX: Menjalankan alur 10 mesin secara lengkap.
+     */
+    fun onAutoRemix(context: Context) {
+        val vocal = _vocalSource.value
+        val beat = _beatSource.value
+
+        if (vocal == null && beat == null) {
+            _errorMessage.value = "Pilih file vokal atau beat sebelum memulai Auto Remix."
+            return
+        }
+
+        if (_isRendering.value) return
+
+        _isRendering.value = true
+        _errorMessage.value = null
+        _outputStatus.value = com.autoremix.djslow.engine.core.OutputEngine.OutputStatus.ANALYZING
+
+        renderJob = viewModelScope.launch {
+            try {
+                _renderStageText.value = "Mendekode berkas audio sumber..."
+                _renderProgressFraction.value = 0.05f
+
+                val vocalPcm = vocal?.uri?.let {
+                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeToPcm(context, it).getOrNull()
+                }
+                val beatPcm = beat?.uri?.let {
+                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeToPcm(context, it).getOrNull()
+                }
+
+                val result = com.autoremix.djslow.engine.core.RemixWorkflowEngine.executeAutoRemix(
+                    context = context,
+                    vocalPcm = vocalPcm,
+                    beatPcm = beatPcm,
+                    style = _remixStyle.value,
+                    targetBpmOverride = _targetBpm.value,
+                    energyPreference = _energyPreference.value,
+                    focusPreference = _focusPreference.value,
+                    seed = _remixSeed.value,
+                    generate30sPreviewOnly = false,
+                    onStatusChanged = { status, prog, msg ->
+                        _outputStatus.value = status
+                        _renderProgressFraction.value = prog
+                        _renderStageText.value = msg
+                        _statusMessage.value = "${status.label}: $msg"
+                    }
+                )
+
+                _isRendering.value = false
+
+                result.onSuccess { workflowResult ->
+                    _musicAnalysis.value = workflowResult.analysis
+                    _remixPlan.value = workflowResult.remixPlan
+                    _targetBpm.value = workflowResult.remixPlan.targetBpm
+                    _detectedKey.value = workflowResult.remixPlan.targetKey
+                    _songSections.value = workflowResult.arrangement.sections.map { it.toSongSection() }
+                    _renderedWavFile.value = workflowResult.masterWavFile
+                    _outputStatus.value = com.autoremix.djslow.engine.core.OutputEngine.OutputStatus.READY
+
+                    val valRes = WavValidator.validate(workflowResult.masterWavFile)
+                    _validationResult.value = valRes
+                    val loadWav = audioPlayer.setRenderedWav(workflowResult.masterWavFile)
+                    if (loadWav.isFailure) {
+                        _errorMessage.value = "Master audio berhasil dibuat tapi gagal dimuat ke pemutar."
+                    } else {
+                        _statusMessage.value = "AUTO REMIX BERHASIL: Siap diputar (${valRes.formattedLufs}, ${valRes.formattedTruePeak})."
+                    }
+                }.onFailure { ex ->
+                    if (ex is kotlinx.coroutines.CancellationException) {
+                        _statusMessage.value = "Auto Remix dibatalkan."
+                    } else {
+                        _errorMessage.value = ex.message ?: "Auto Remix gagal."
+                        _statusMessage.value = "Auto Remix gagal. Silakan coba lagi."
+                    }
+                }
+            } catch (e: Exception) {
+                _isRendering.value = false
+                _errorMessage.value = e.localizedMessage ?: e.message
+            }
+        }
+    }
+
+    /**
+     * 30 SECOND PREVIEW: Menghasilkan preview 30 detik pada bagian Build & Drop.
+     */
+    fun onGenerate30sPreview(context: Context) {
+        val vocal = _vocalSource.value
+        val beat = _beatSource.value
+
+        if (vocal == null && beat == null) {
+            _errorMessage.value = "Pilih file vokal atau beat sebelum membuat pratinjau 30 detik."
+            return
+        }
+
+        if (_isGeneratingPreview30s.value || _isRendering.value) return
+
+        _isGeneratingPreview30s.value = true
+        _errorMessage.value = null
+
+        viewModelScope.launch {
+            try {
+                val vocalPcm = vocal?.uri?.let {
+                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeToPcm(context, it).getOrNull()
+                }
+                val beatPcm = beat?.uri?.let {
+                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeToPcm(context, it).getOrNull()
+                }
+
+                val result = com.autoremix.djslow.engine.core.RemixWorkflowEngine.executeAutoRemix(
+                    context = context,
+                    vocalPcm = vocalPcm,
+                    beatPcm = beatPcm,
+                    style = _remixStyle.value,
+                    targetBpmOverride = _targetBpm.value,
+                    energyPreference = _energyPreference.value,
+                    focusPreference = _focusPreference.value,
+                    seed = _remixSeed.value,
+                    generate30sPreviewOnly = true,
+                    onStatusChanged = { status, prog, msg ->
+                        _statusMessage.value = "Pratinjau 30s (${(prog * 100).toInt()}%): $msg"
+                    }
+                )
+
+                _isGeneratingPreview30s.value = false
+
+                result.onSuccess { workflowResult ->
+                    _preview30sFile.value = workflowResult.preview30sFile
+                    workflowResult.preview30sFile?.let { pFile ->
+                        _renderedWavFile.value = pFile
+                        val valRes = WavValidator.validate(pFile)
+                        _validationResult.value = valRes
+                        audioPlayer.setRenderedWav(pFile)
+                        _statusMessage.value = "PRATINJAU 30 DETIK SIAP DIPUTAR (Build & Drop)!"
+                    }
+                }.onFailure { ex ->
+                    _errorMessage.value = "Gagal membuat pratinjau 30s: ${ex.message}"
+                }
+            } catch (e: Exception) {
+                _isGeneratingPreview30s.value = false
+                _errorMessage.value = e.localizedMessage ?: e.message
+            }
+        }
+    }
+
+    /**
+     * BUAT VERSI LAIN: Menghasilkan seed baru, mempertahankan vokal, kunci, BPM & gaya,
+     * tetapi memvariasikan pola drum, bass, melodi, dan aransemen secara nyata.
+     */
+    fun onRegenerateVersion(context: Context) {
+        val newSeed = Random.nextLong(1, 999999)
+        _remixSeed.value = newSeed
+        _melodySeed.value = newSeed
+        _statusMessage.value = "Seed variasi baru diterapkan (#$newSeed). Memulai render versi lain..."
+        onAutoRemix(context)
     }
 
     // ---- Ekspor MediaStore & MP3 (Tahap 6 Final) ----

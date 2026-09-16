@@ -117,7 +117,20 @@ data class UiState(
     val isLoudnessMatchingEnabled: Boolean = false,
     val unmasteredLufs: Float = -14.0f,
     val hasSavedProject: Boolean = false,
-    val exportSuccessMessage: String? = null
+    val exportSuccessMessage: String? = null,
+
+    // Intelligent Remix Engine (Arsitektur 10 Mesin Inti)
+    val isQuickMode: Boolean = true, // true = Mode Cepat, false = Mode Studio
+    val remixStyle: com.autoremix.djslow.engine.core.RemixBrain.RemixStyle = com.autoremix.djslow.engine.core.RemixBrain.RemixStyle.DJ_SLOW,
+    val energyPreference: com.autoremix.djslow.engine.core.RemixBrain.EnergyPreference = com.autoremix.djslow.engine.core.RemixBrain.EnergyPreference.MEDIUM,
+    val focusPreference: com.autoremix.djslow.engine.core.RemixBrain.FocusPreference = com.autoremix.djslow.engine.core.RemixBrain.FocusPreference.BALANCED,
+    val remixSeed: Long = 42L,
+    val musicAnalysis: com.autoremix.djslow.engine.core.MusicUnderstandingEngine.MusicAnalysis? = null,
+    val remixPlan: com.autoremix.djslow.engine.core.RemixBrain.RemixPlan? = null,
+    val outputStatus: com.autoremix.djslow.engine.core.OutputEngine.OutputStatus = com.autoremix.djslow.engine.core.OutputEngine.OutputStatus.IDLE,
+    val isGeneratingPreview30s: Boolean = false,
+    val preview30sFile: File? = null,
+    val sourceProject: com.autoremix.djslow.engine.core.SourceEngine.SourceProject = com.autoremix.djslow.engine.core.SourceEngine.SourceProject()
 ) {
     val masterBusSettings: BusSettings
         get() = BusSettings(BusType.MASTER_BUS, volume = masterGain)

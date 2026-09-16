@@ -119,5 +119,7 @@ enum class MasteringPreset(
         saturationDrive = 0.20f,
         stereoWidth = 1.20f,
         vocalPocketDepthDb = -3.2f
-    )
+    );
+
+    val displayName: String get() = label
 }

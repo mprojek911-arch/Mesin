@@ -19,6 +19,9 @@ enum class PitchClass(val semitone: Int, val noteName: String) {
     A_SHARP(10, "A#"),
     B(11, "B");
 
+    val displayName: String
+        get() = noteName
+
     companion object {
         fun fromSemitone(semitone: Int): PitchClass {
             val normalized = ((semitone % 12) + 12) % 12
@@ -104,6 +107,9 @@ data class Chord(
 ) {
     val name: String
         get() = "${root.noteName}${type.symbol}"
+
+    val displayName: String
+        get() = name
 
     /**
      * Nada-nada penyusun akor dalam pitch class.

@@ -66,6 +66,18 @@ data class AudioPcmData(
         return false
     }
 
+    /**
+     * Mengembalikan AudioPcmData dengan volume diskalakan.
+     */
+    fun scaled(volume: Float): AudioPcmData {
+        if (volume == 1.0f) return this
+        val newSamples = FloatArray(samples.size)
+        for (i in samples.indices) {
+            newSamples[i] = samples[i] * volume
+        }
+        return AudioPcmData(newSamples, sampleRate, channels)
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
