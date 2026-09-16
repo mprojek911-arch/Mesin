@@ -7,6 +7,11 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import com.autoremix.djslow.logchat.AudioDiagnosticInfo
+import com.autoremix.djslow.logchat.LogChatManager
+import com.autoremix.djslow.logchat.LogModule
+import com.autoremix.djslow.logchat.PipelineStage
+import com.autoremix.djslow.logchat.StepStatus
 import java.io.FileNotFoundException
 
 /**
@@ -21,6 +26,8 @@ object AudioDecoder {
      */
     fun decode(context: Context, uri: Uri): Result<AudioSource> {
         val contentResolver = context.contentResolver
+        LogChatManager.info(LogModule.AUDIO, "AUDIO_DECODE_START: Memulai pembacaan URI audio...", stage = "DECODE")
+        LogChatManager.updatePipeline(PipelineStage.INPUT, StepStatus.SUCCESS, "URI SAF Diterima")
 
         // 1. Ekstraksi nama file & ukuran
         var fileName: String? = null
@@ -40,7 +47,10 @@ object AudioDecoder {
                 }
             }
         } catch (e: SecurityException) {
-            return Result.failure(IllegalStateException("File tidak tersedia."))
+            val ex = IllegalStateException("File tidak tersedia (SecurityException)")
+            LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: SecurityException akses file", ex, stage = "DECODE")
+            LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "SecurityException")
+            return Result.failure(ex)
         } catch (e: Exception) {
             // Abaikan query cursor jika provider khusus
         }
@@ -56,22 +66,44 @@ object AudioDecoder {
         val isExtSupported = SUPPORTED_EXTENSIONS.contains(extension)
 
         if (!isExtSupported && !isMimeAudio && mimeType != null && !mimeType.contains("octet-stream")) {
-            return Result.failure(IllegalArgumentException("Format audio belum didukung."))
+            val ex = IllegalArgumentException("Format audio belum didukung: $extension (MIME: $mimeType)")
+            LogChatManager.error(
+                module = LogModule.AUDIO,
+                message = "AUDIO_DECODE_FAILED: Gagal membaca file audio.",
+                throwable = ex,
+                detail = "Unsupported audio format: .$extension. Format yang didukung: MP3, WAV, M4A, AAC, OGG, FLAC.",
+                stage = "DECODE",
+                file = resolvedName
+            )
+            LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Unsupported audio format")
+            return Result.failure(ex)
         }
 
         // 3. Uji keterbacaan berkas fisik dari storage
         val afd = try {
             contentResolver.openAssetFileDescriptor(uri, "r")
         } catch (e: FileNotFoundException) {
-            return Result.failure(FileNotFoundException("File tidak tersedia."))
+            val ex = FileNotFoundException("File tidak ditemukan: $resolvedName")
+            LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: File tidak ditemukan", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "File not found")
+            return Result.failure(ex)
         } catch (e: SecurityException) {
-            return Result.failure(SecurityException("File tidak tersedia."))
+            val ex = SecurityException("Izin akses file ditolak: $resolvedName")
+            LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: Izin akses file ditolak", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Permission denied")
+            return Result.failure(ex)
         } catch (e: Exception) {
-            return Result.failure(IllegalStateException("File audio tidak dapat dibaca."))
+            val ex = IllegalStateException("File audio tidak dapat dibaca: ${e.message}")
+            LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: File audio tidak dapat dibaca", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, e.message ?: "Read error")
+            return Result.failure(ex)
         }
 
         if (afd == null) {
-            return Result.failure(IllegalStateException("File tidak tersedia."))
+            val ex = IllegalStateException("AssetFileDescriptor null untuk: $resolvedName")
+            LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: File descriptor tidak tersedia", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Null file descriptor")
+            return Result.failure(ex)
         }
 
         if (fileSize <= 0L && afd.length > 0L) {
@@ -100,7 +132,10 @@ object AudioDecoder {
             }
         } catch (e: Exception) {
             try { afd.close() } catch (_: Exception) {}
-            return Result.failure(IllegalStateException("File audio tidak dapat dibaca."))
+            val ex = IllegalStateException("Gagal mengekstrak metadata audio: ${e.message}")
+            LogChatManager.error(LogModule.AUDIO, "AUDIO_DECODE_FAILED: Metadata ekstraksi gagal", ex, stage = "DECODE", file = resolvedName)
+            LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Metadata extraction failed")
+            return Result.failure(ex)
         } finally {
             try { retriever.release() } catch (_: Exception) {}
         }
@@ -142,6 +177,26 @@ object AudioDecoder {
             sampleRateHz = sampleRate,
             channelCount = channelCount,
             formatExtension = extension
+        )
+
+        LogChatManager.info(
+            module = LogModule.AUDIO,
+            message = "AUDIO_DECODE_SUCCESS: File audio berhasil didekode.",
+            detail = "Nama: $resolvedName | Format: $extension | Durasi: ${durationMs / 1000}s | Sample Rate: ${sampleRate ?: 44100}Hz | Channels: ${channelCount ?: 2}",
+            stage = "DECODE",
+            file = resolvedName
+        )
+        LogChatManager.updatePipeline(PipelineStage.DECODE, StepStatus.SUCCESS, "$resolvedName (${durationMs / 1000}s)")
+        LogChatManager.updateAudioDiagnostic(
+            AudioDiagnosticInfo(
+                fileName = resolvedName,
+                format = extension,
+                durationMs = durationMs,
+                sampleRate = sampleRate ?: 44100,
+                channels = channelCount ?: 2,
+                fileSizeBytes = fileSize,
+                lastSuccessfulStep = "Decode"
+            )
         )
 
         return Result.success(audioSource)

@@ -64,6 +64,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.PaddingValues
+import com.autoremix.djslow.logchat.LogChatScreen
 import androidx.compose.ui.Alignment
 import com.autoremix.djslow.engine.structure.SongSection
 import com.autoremix.djslow.engine.structure.SongSectionType
@@ -118,6 +123,16 @@ fun MainScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { viewModel.onBeatSelected(context, it) }
+    }
+
+    var showLogChat by remember { mutableStateOf(false) }
+
+    if (showLogChat) {
+        LogChatScreen(
+            onDismiss = { showLogChat = false },
+            modifier = modifier
+        )
+        return
     }
 
     Box(
@@ -186,19 +201,43 @@ fun MainScreen(
                             }
                         }
 
-                        // Badge Tahap 4
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(NeonPurple.copy(alpha = 0.2f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "TAHAP 4: ARANSEMEN",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = NeonPurple
-                            )
+                            // Tombol 🛠️ LOGCHAT
+                            OutlinedButton(
+                                onClick = { showLogChat = true },
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .testTag("open_logchat_button"),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.8f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan)
+                            ) {
+                                Text(
+                                    text = "🛠️ LOGCHAT",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NeonCyan
+                                )
+                            }
+
+                            // Badge Tahap 4
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(NeonPurple.copy(alpha = 0.2f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "TAHAP 4: ARANSEMEN",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NeonPurple
+                                )
+                            }
                         }
                     }
 

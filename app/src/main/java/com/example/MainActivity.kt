@@ -13,12 +13,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import com.autoremix.djslow.logchat.LogChatManager
+import com.autoremix.djslow.logchat.LogModule
 import com.autoremix.djslow.ui.MainScreen
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    LogChatManager.init(applicationContext)
+    LogChatManager.info(LogModule.SYSTEM, "APP_START: Aplikasi AUTO REMIX DJ SLOW diinisialisasi.")
     enableEdgeToEdge()
     setContent {
       MyApplicationTheme {
@@ -30,6 +34,21 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    LogChatManager.info(LogModule.SYSTEM, "APP_RESUME: Aplikasi kembali ke foreground.")
+  }
+
+  override fun onPause() {
+    super.onPause()
+    LogChatManager.info(LogModule.SYSTEM, "APP_PAUSE: Aplikasi masuk ke background.")
+  }
+
+  override fun onDestroy() {
+    LogChatManager.info(LogModule.SYSTEM, "APP_STOP: Aplikasi dihentikan.")
+    super.onDestroy()
   }
 }
 

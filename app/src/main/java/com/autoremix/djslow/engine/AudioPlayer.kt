@@ -3,6 +3,10 @@ package com.autoremix.djslow.engine
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import com.autoremix.djslow.logchat.LogChatManager
+import com.autoremix.djslow.logchat.LogModule
+import com.autoremix.djslow.logchat.PipelineStage
+import com.autoremix.djslow.logchat.StepStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,6 +119,7 @@ class AudioPlayer(
     fun play() {
         var anyPlayed = false
         var errorOccurred = false
+        var lastError: Throwable? = null
 
         try {
             vocalMediaPlayer?.let { player ->
@@ -125,6 +130,7 @@ class AudioPlayer(
             }
         } catch (e: Exception) {
             errorOccurred = true
+            lastError = e
         }
 
         try {
@@ -136,12 +142,17 @@ class AudioPlayer(
             }
         } catch (e: Exception) {
             errorOccurred = true
+            lastError = e
         }
 
         if (errorOccurred) {
             _audioState.update { it.copy(playbackState = PlaybackEngineState.ERROR, errorMessage = "Audio tidak dapat diputar.") }
+            LogChatManager.error(LogModule.PLAYBACK, "PLAYBACK_ERROR: Gagal memutar track audio.", lastError, stage = "PLAYBACK")
+            LogChatManager.updatePipeline(PipelineStage.PLAYBACK, StepStatus.FAILED, lastError?.message ?: "Playback error")
         } else if (anyPlayed || (vocalMediaPlayer?.isPlaying == true) || (beatMediaPlayer?.isPlaying == true)) {
             _audioState.update { it.copy(playbackState = PlaybackEngineState.MEMUTAR, errorMessage = null) }
+            LogChatManager.info(LogModule.PLAYBACK, "PLAYBACK_START: Pemutaran audio sinkron dimulai.", stage = "PLAYBACK")
+            LogChatManager.updatePipeline(PipelineStage.PLAYBACK, StepStatus.SUCCESS, "Memutar audio")
         }
     }
 
@@ -161,8 +172,10 @@ class AudioPlayer(
                 }
             }
             _audioState.update { it.copy(playbackState = PlaybackEngineState.DIJEDA) }
+            LogChatManager.info(LogModule.PLAYBACK, "PLAYBACK_PAUSE: Pemutaran dijeda.", stage = "PLAYBACK")
         } catch (e: Exception) {
             _audioState.update { it.copy(playbackState = PlaybackEngineState.ERROR, errorMessage = "Audio tidak dapat diputar.") }
+            LogChatManager.error(LogModule.PLAYBACK, "PLAYBACK_ERROR: Gagal menjeda audio.", e, stage = "PLAYBACK")
         }
     }
 
@@ -176,6 +189,7 @@ class AudioPlayer(
                 beatPositionMs = 0L
             )
         }
+        LogChatManager.info(LogModule.PLAYBACK, "PLAYBACK_STOP: Pemutaran dihentikan (kembali ke 0).", stage = "PLAYBACK")
     }
 
     private fun stopVocalInternal() {
