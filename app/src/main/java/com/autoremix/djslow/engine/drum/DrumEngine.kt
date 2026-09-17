@@ -293,7 +293,177 @@ object DrumEngine {
     }
 
     /**
-     * Merender seluruh drum events menjadi buffer PCM Stereo Float32 murni (DSP).
+     * Merender satu blok drum secara streaming langsung ke [outBuffer] pada [offset].
+     * Menghilangkan kebutuhan alokasi array PCM track penuh dan memungkinkan reuse buffer.
+     */
+    fun renderDrumBlock(
+        events: List<DrumEvent>,
+        startFrame: Long,
+        frameCount: Int,
+        sampleRate: Int,
+        outBuffer: FloatArray,
+        offset: Int = 0
+    ) {
+        val channels = 2
+        val endFrame = startFrame + frameCount
+
+        for (event in events) {
+            val eventStart = event.sampleOffset
+            val maxDuration = when (event.soundType) {
+                DrumSoundType.KICK -> (sampleRate * 0.35).toInt()
+                DrumSoundType.SNARE, DrumSoundType.FILL_SNARE -> (sampleRate * 0.22).toInt()
+                DrumSoundType.CLAP -> (sampleRate * 0.25).toInt()
+                DrumSoundType.CLOSED_HAT -> (sampleRate * 0.045).toInt()
+                DrumSoundType.OPEN_HAT -> (sampleRate * 0.20).toInt()
+                DrumSoundType.CRASH -> (sampleRate * 2.2).toInt()
+                DrumSoundType.PERCUSSION -> (sampleRate * 0.12).toInt()
+            }
+            val duration = min(event.durationSamples, maxDuration)
+            val eventEnd = eventStart + duration
+            if (eventEnd <= startFrame || eventStart >= endFrame) continue
+
+            val overlapStart = maxOf(startFrame, eventStart)
+            val overlapEnd = minOf(endFrame, eventEnd)
+
+            val vel = event.velocity
+            val sound = event.soundType
+
+            when (sound) {
+                DrumSoundType.KICK -> {
+                    for (f in overlapStart until overlapEnd) {
+                        val i = (f - eventStart).toInt()
+                        val outIdx = offset + ((f - startFrame) * channels).toInt()
+                        if (outIdx + 1 >= outBuffer.size) break
+
+                        val t = i.toDouble() / sampleRate
+                        val env = exp(-t * 12.0)
+                        val pitch = 45.0 + 95.0 * exp(-t * 35.0)
+                        val phase = 2.0 * PI * (45.0 * t - (95.0 / 35.0) * (exp(-t * 35.0) - 1.0))
+                        val sampleVal = (sin(phase) * env * vel * 0.85f).toFloat()
+
+                        val transient = if (t < 0.015) {
+                            val noise = (((i * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f)
+                            (noise * (1.0 - t / 0.015) * 0.2f * vel).toFloat()
+                        } else 0f
+
+                        val mixed = sampleVal + transient
+                        outBuffer[outIdx] += mixed
+                        outBuffer[outIdx + 1] += mixed
+                    }
+                }
+
+                DrumSoundType.SNARE, DrumSoundType.FILL_SNARE -> {
+                    for (f in overlapStart until overlapEnd) {
+                        val i = (f - eventStart).toInt()
+                        val outIdx = offset + ((f - startFrame) * channels).toInt()
+                        if (outIdx + 1 >= outBuffer.size) break
+
+                        val t = i.toDouble() / sampleRate
+                        val bodyEnv = exp(-t * 22.0)
+                        val noiseEnv = exp(-t * 14.0)
+                        val tone = sin(2.0 * PI * 180.0 * t) * bodyEnv * 0.45
+                        val noise = (((i * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f) * noiseEnv * 0.55
+                        val sampleVal = ((tone + noise) * vel * 0.65f).toFloat()
+
+                        outBuffer[outIdx] += sampleVal
+                        outBuffer[outIdx + 1] += sampleVal
+                    }
+                }
+
+                DrumSoundType.CLAP -> {
+                    for (f in overlapStart until overlapEnd) {
+                        val i = (f - eventStart).toInt()
+                        val outIdx = offset + ((f - startFrame) * channels).toInt()
+                        if (outIdx + 1 >= outBuffer.size) break
+
+                        val t = i.toDouble() / sampleRate
+                        val noise = ((i * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f
+                        val env = exp(-t * 16.0)
+
+                        val burstMultiplier = when {
+                            t < 0.010 -> 0.8
+                            t in 0.012..0.022 -> 0.9
+                            t in 0.024..0.034 -> 1.0
+                            else -> 0.5
+                        }
+                        val sampleVal = (noise * env * burstMultiplier * vel * 0.60f).toFloat()
+                        outBuffer[outIdx] += sampleVal
+                        outBuffer[outIdx + 1] += sampleVal
+                    }
+                }
+
+                DrumSoundType.CLOSED_HAT -> {
+                    for (f in overlapStart until overlapEnd) {
+                        val i = (f - eventStart).toInt()
+                        val outIdx = offset + ((f - startFrame) * channels).toInt()
+                        if (outIdx + 1 >= outBuffer.size) break
+
+                        val t = i.toDouble() / sampleRate
+                        val env = exp(-t * 65.0)
+                        val rawNoise = ((i * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f
+                        val prevNoise = (((i - 1) * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f
+                        val hpNoise = rawNoise - prevNoise
+
+                        val sampleVal = (hpNoise * env * vel * 0.35f).toFloat()
+                        outBuffer[outIdx] += sampleVal
+                        outBuffer[outIdx + 1] += sampleVal
+                    }
+                }
+
+                DrumSoundType.OPEN_HAT -> {
+                    for (f in overlapStart until overlapEnd) {
+                        val i = (f - eventStart).toInt()
+                        val outIdx = offset + ((f - startFrame) * channels).toInt()
+                        if (outIdx + 1 >= outBuffer.size) break
+
+                        val t = i.toDouble() / sampleRate
+                        val env = exp(-t * 14.0)
+                        val rawNoise = ((i * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f
+                        val prevNoise = (((i - 1) * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f
+                        val hpNoise = rawNoise - prevNoise
+
+                        val sampleVal = (hpNoise * env * vel * 0.40f).toFloat()
+                        outBuffer[outIdx] += sampleVal
+                        outBuffer[outIdx + 1] += sampleVal
+                    }
+                }
+
+                DrumSoundType.CRASH -> {
+                    for (f in overlapStart until overlapEnd) {
+                        val i = (f - eventStart).toInt()
+                        val outIdx = offset + ((f - startFrame) * channels).toInt()
+                        if (outIdx + 1 >= outBuffer.size) break
+
+                        val t = i.toDouble() / sampleRate
+                        val env = exp(-t * 2.2).toFloat()
+                        val noiseL = (((i * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f) * env * vel * 0.40f
+                        val noiseR = ((((i + 777) * 1103515245 + 12345) and 0x7FFFFFFF).toFloat() / 0x3FFFFFFF - 1.0f) * env * vel * 0.40f
+
+                        outBuffer[outIdx] += noiseL
+                        outBuffer[outIdx + 1] += noiseR
+                    }
+                }
+
+                DrumSoundType.PERCUSSION -> {
+                    for (f in overlapStart until overlapEnd) {
+                        val i = (f - eventStart).toInt()
+                        val outIdx = offset + ((f - startFrame) * channels).toInt()
+                        if (outIdx + 1 >= outBuffer.size) break
+
+                        val t = i.toDouble() / sampleRate
+                        val env = exp(-t * 30.0)
+                        val sampleVal = (sin(2.0 * PI * 420.0 * t) * env * vel * 0.50f).toFloat()
+
+                        outBuffer[outIdx] += sampleVal
+                        outBuffer[outIdx + 1] += sampleVal
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Merender seluruh drum events menjadi buffer PCM Stereo Float32 murni (DSP) menggunakan pemrosesan blok.
      */
     fun renderDrums(
         events: List<DrumEvent>,
@@ -305,162 +475,13 @@ object DrumEngine {
         val totalFloats = (safeSamples * channels).toInt().coerceAtLeast(channels)
         val buffer = FloatArray(totalFloats)
 
-        val random = Random(42)
-
-        for (event in events) {
-            val startIdx = (event.sampleOffset * channels).toInt()
-            if (startIdx >= buffer.size) continue
-
-            val vel = event.velocity
-            val sound = event.soundType
-
-            when (sound) {
-                DrumSoundType.KICK -> {
-                    // Sine sweep dari 140 Hz ke 45 Hz dengan pitch envelope eksponensial
-                    val duration = min(event.durationSamples, (sampleRate * 0.35).toInt())
-                    var phase = 0.0
-                    for (i in 0 until duration) {
-                        val outIdx = startIdx + i * channels
-                        if (outIdx + 1 >= buffer.size) break
-
-                        val t = i.toDouble() / sampleRate
-                        val env = exp(-t * 12.0)
-                        val pitch = 45.0 + 95.0 * exp(-t * 35.0)
-                        phase += 2.0 * PI * pitch / sampleRate
-                        val sampleVal = (sin(phase) * env * vel * 0.85f).toFloat()
-
-                        // Tambahkan sedikit punch transient di 15ms awal
-                        val transient = if (t < 0.015) ((random.nextFloat() * 2f - 1f) * (1.0 - t / 0.015) * 0.2f * vel).toFloat() else 0f
-
-                        val mixed = sampleVal + transient
-                        buffer[outIdx] += mixed
-                        buffer[outIdx + 1] += mixed
-                    }
-                }
-
-                DrumSoundType.SNARE, DrumSoundType.FILL_SNARE -> {
-                    // Body sine (180 Hz) + shaped noise
-                    val duration = min(event.durationSamples, (sampleRate * 0.22).toInt())
-                    var phase = 0.0
-                    for (i in 0 until duration) {
-                        val outIdx = startIdx + i * channels
-                        if (outIdx + 1 >= buffer.size) break
-
-                        val t = i.toDouble() / sampleRate
-                        val bodyEnv = exp(-t * 22.0)
-                        val noiseEnv = exp(-t * 14.0)
-                        val tone = sin(phase) * bodyEnv * 0.45
-                        phase += 2.0 * PI * 180.0 / sampleRate
-
-                        val noise = (random.nextFloat() * 2f - 1f) * noiseEnv * 0.55
-                        val sampleVal = ((tone + noise) * vel * 0.65f).toFloat()
-
-                        buffer[outIdx] += sampleVal
-                        buffer[outIdx + 1] += sampleVal
-                    }
-                }
-
-                DrumSoundType.CLAP -> {
-                    // Multi-burst impulse (3 mikro klik) + ekor noise
-                    val duration = min(event.durationSamples, (sampleRate * 0.25).toInt())
-                    for (i in 0 until duration) {
-                        val outIdx = startIdx + i * channels
-                        if (outIdx + 1 >= buffer.size) break
-
-                        val t = i.toDouble() / sampleRate
-                        val noise = (random.nextFloat() * 2f - 1f)
-                        val env = exp(-t * 16.0)
-
-                        // Mikro burst di 0ms, 12ms, 24ms
-                        val burstMultiplier = when {
-                            t < 0.010 -> 0.8
-                            t in 0.012..0.022 -> 0.9
-                            t in 0.024..0.034 -> 1.0
-                            else -> 0.5
-                        }
-
-                        val sampleVal = (noise * env * burstMultiplier * vel * 0.60f).toFloat()
-                        buffer[outIdx] += sampleVal
-                        buffer[outIdx + 1] += sampleVal
-                    }
-                }
-
-                DrumSoundType.CLOSED_HAT -> {
-                    // Noise frekuensi tinggi dengan decay sangat cepat (35ms)
-                    val duration = min(event.durationSamples, (sampleRate * 0.045).toInt())
-                    var prevN = 0.0f
-                    for (i in 0 until duration) {
-                        val outIdx = startIdx + i * channels
-                        if (outIdx + 1 >= buffer.size) break
-
-                        val t = i.toDouble() / sampleRate
-                        val env = exp(-t * 65.0)
-                        val rawNoise = random.nextFloat() * 2f - 1f
-                        // High-pass diferensial
-                        val hpNoise = rawNoise - prevN
-                        prevN = rawNoise
-
-                        val sampleVal = (hpNoise * env * vel * 0.35f).toFloat()
-                        buffer[outIdx] += sampleVal
-                        buffer[outIdx + 1] += sampleVal
-                    }
-                }
-
-                DrumSoundType.OPEN_HAT -> {
-                    // Noise frekuensi tinggi decay 180ms
-                    val duration = min(event.durationSamples, (sampleRate * 0.20).toInt())
-                    var prevN = 0.0f
-                    for (i in 0 until duration) {
-                        val outIdx = startIdx + i * channels
-                        if (outIdx + 1 >= buffer.size) break
-
-                        val t = i.toDouble() / sampleRate
-                        val env = exp(-t * 14.0)
-                        val rawNoise = random.nextFloat() * 2f - 1f
-                        val hpNoise = rawNoise - prevN
-                        prevN = rawNoise
-
-                        val sampleVal = (hpNoise * env * vel * 0.40f).toFloat()
-                        buffer[outIdx] += sampleVal
-                        buffer[outIdx + 1] += sampleVal
-                    }
-                }
-
-                DrumSoundType.CRASH -> {
-                    // Noise shimmer lebar stereo dengan decay 2.2 detik
-                    val duration = min(event.durationSamples, (sampleRate * 2.2).toInt())
-                    for (i in 0 until duration) {
-                        val outIdx = startIdx + i * channels
-                        if (outIdx + 1 >= buffer.size) break
-
-                        val t = i.toDouble() / sampleRate
-                        val env = exp(-t * 2.2)
-                        val noiseL = ((random.nextFloat() * 2f - 1f) * env * vel * 0.40f).toFloat()
-                        val noiseR = ((random.nextFloat() * 2f - 1f) * env * vel * 0.40f).toFloat()
-
-                        buffer[outIdx] += noiseL
-                        buffer[outIdx + 1] += noiseR
-                    }
-                }
-
-                DrumSoundType.PERCUSSION -> {
-                    // Bongo / rimshot wood tone
-                    val duration = min(event.durationSamples, (sampleRate * 0.12).toInt())
-                    var phase = 0.0
-                    for (i in 0 until duration) {
-                        val outIdx = startIdx + i * channels
-                        if (outIdx + 1 >= buffer.size) break
-
-                        val t = i.toDouble() / sampleRate
-                        val env = exp(-t * 30.0)
-                        phase += 2.0 * PI * 420.0 / sampleRate
-                        val sampleVal = (sin(phase) * env * vel * 0.50f).toFloat()
-
-                        buffer[outIdx] += sampleVal
-                        buffer[outIdx + 1] += sampleVal
-                    }
-                }
-            }
+        val blockFrames = 16384
+        var current = 0L
+        while (current < safeSamples) {
+            val count = minOf(blockFrames.toLong(), safeSamples - current).toInt()
+            val offset = (current * channels).toInt()
+            renderDrumBlock(events, current, count, sampleRate, buffer, offset)
+            current += count
         }
 
         return AudioPcmData(

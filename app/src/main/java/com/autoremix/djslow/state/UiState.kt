@@ -120,7 +120,7 @@ data class UiState(
     val exportSuccessMessage: String? = null,
 
     // Intelligent Remix Engine (Arsitektur 10 Mesin Inti)
-    val isQuickMode: Boolean = false, // true = Mode Cepat, false = Mode Studio
+    val isQuickMode: Boolean = false, // false = Mode Studio (default), true = Mode Cepat
     val remixStyle: com.autoremix.djslow.engine.core.RemixBrain.RemixStyle = com.autoremix.djslow.engine.core.RemixBrain.RemixStyle.DJ_SLOW,
     val energyPreference: com.autoremix.djslow.engine.core.RemixBrain.EnergyPreference = com.autoremix.djslow.engine.core.RemixBrain.EnergyPreference.MEDIUM,
     val focusPreference: com.autoremix.djslow.engine.core.RemixBrain.FocusPreference = com.autoremix.djslow.engine.core.RemixBrain.FocusPreference.BALANCED,

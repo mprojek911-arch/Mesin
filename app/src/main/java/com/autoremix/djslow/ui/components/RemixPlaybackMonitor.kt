@@ -124,7 +124,7 @@ fun RemixPlaybackMonitor(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "🎧 MONITOR HASIL REMIX",
+                            text = "🎧 MASTER REMIX",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
@@ -138,16 +138,16 @@ fun RemixPlaybackMonitor(
                     }
                 }
 
-                // Status Badge Nyata
+                // Status Badge Nyata (Aturan 1)
                 val status = uiState.renderedPlaybackStatus
-                val (badgeColor, textColor) = when (status) {
-                    RenderedPlaybackStatus.SEDANG_MEMUTAR -> Pair(Color(0xFF00E676), Color.Black)
-                    RenderedPlaybackStatus.DIJEDA -> Pair(NeonAmber, Color.Black)
-                    RenderedPlaybackStatus.SIAP -> Pair(NeonCyan, Color.Black)
-                    RenderedPlaybackStatus.SELESAI -> Pair(Color(0xFF818CF8), Color.White)
-                    RenderedPlaybackStatus.ERROR -> Pair(StatusError, Color.White)
-                    RenderedPlaybackStatus.BERHENTI -> Pair(StudioSurfaceElevated, TextSecondary)
-                    RenderedPlaybackStatus.BELUM_TERSEDIA -> Pair(StudioSurfaceElevated, TextMuted)
+                val (badgeColor, textColor, statusPrefix) = when (status) {
+                    RenderedPlaybackStatus.SEDANG_MEMUTAR -> Triple(Color(0xFF00E676), Color.Black, "🟢 ")
+                    RenderedPlaybackStatus.DIJEDA -> Triple(NeonAmber, Color.Black, "🟡 ")
+                    RenderedPlaybackStatus.SIAP -> Triple(NeonCyan, Color.Black, "🔵 ")
+                    RenderedPlaybackStatus.SELESAI -> Triple(Color(0xFF818CF8), Color.White, "⏹ ")
+                    RenderedPlaybackStatus.ERROR -> Triple(StatusError, Color.White, "🔴 ")
+                    RenderedPlaybackStatus.BERHENTI -> Triple(StudioSurfaceElevated, TextSecondary, "⏹ ")
+                    RenderedPlaybackStatus.BELUM_TERSEDIA -> Triple(StudioSurfaceElevated, TextMuted, "⚪ ")
                 }
 
                 Surface(
@@ -156,7 +156,7 @@ fun RemixPlaybackMonitor(
                     modifier = Modifier.testTag("rendered_playback_status")
                 ) {
                     Text(
-                        text = status.label,
+                        text = "$statusPrefix${status.label}",
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
@@ -219,95 +219,116 @@ fun RemixPlaybackMonitor(
             }
 
             // ==============================================================
-            // 3. BANNER HASIL REMIX SIAP DIPUTAR (ATURAN 12)
+            // 3. PANEL INFORMASI MASTER (ATURAN 4 & 12)
             // ==============================================================
             if (uiState.isRenderedAvailable && !uiState.isRendering) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF072115),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF0B1914),
                     border = BorderStroke(1.dp, Color(0xFF00E676).copy(alpha = 0.5f))
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF00E676),
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF00E676),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "🎧 HASIL REMIX SIAP DIPUTAR",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    text = "🎧 MASTER REMIX SIAP",
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF00E676)
                                 )
+                            }
+
+                            val isValid = uiState.validationResult?.isValid != false && uiState.renderedPlaybackStatus != RenderedPlaybackStatus.ERROR
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = if (isValid) Color(0xFF00E676).copy(alpha = 0.2f) else StatusError.copy(alpha = 0.2f),
+                                border = BorderStroke(1.dp, if (isValid) Color(0xFF00E676) else StatusError)
+                            ) {
                                 Text(
-                                    text = "Durasi: ${formatTime(uiState.renderedDurationMs)} • ${(uiState.renderedWavFile?.length() ?: 0L) / 1024} KB",
+                                    text = if (isValid) "VALID" else "TIDAK VALID",
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = TextSecondary
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isValid) Color(0xFF00E676) else StatusError
                                 )
                             }
                         }
 
-                        // Status Loudness & Peak
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                text = "LUFS: ${uiState.validationResult?.formattedLufs ?: "-14.0 LUFS"}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = NeonCyan
-                            )
-                            Text(
-                                text = "Peak: ${uiState.validationResult?.formattedTruePeak ?: "-0.80 dBTP"}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TextMuted
-                            )
+                        // Rincian Metadata Master Audio Sesuai Aturan 4
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "File: ${uiState.renderedWavFile?.name ?: "DJ_SLOW_MASTER.wav"}", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                                Text(text = "Format: WAV 16-bit PCM", fontSize = 11.sp, color = TextSecondary)
+                                Text(text = "Sample Rate: 44.1 kHz • Stereo", fontSize = 11.sp, color = TextSecondary)
+                            }
+                            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                                Text(text = "Durasi: ${formatTime(uiState.renderedDurationMs)}", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                                Text(text = "Loudness: ${uiState.validationResult?.formattedLufs ?: "-14.0 LUFS"}", fontSize = 11.sp, color = NeonCyan, fontWeight = FontWeight.Bold)
+                                Text(text = "True Peak: ${uiState.validationResult?.formattedTruePeak ?: "-0.80 dBTP"}", fontSize = 11.sp, color = NeonAmber, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
             }
 
-            // Error Notice jika Validasi Output Gagal (Aturan 13)
+            // Error Notice jika Validasi Output Gagal / Fatal Clipping (Aturan 10)
             if (uiState.renderedPlaybackStatus == RenderedPlaybackStatus.ERROR || uiState.validationResult?.isValid == false) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = Color(0xFF330C0C),
                     border = BorderStroke(1.dp, StatusError)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(10.dp),
+                            .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = Icons.Default.Warning,
                             contentDescription = null,
                             tint = StatusError,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(22.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = "🔴 AUDIO TIDAK VALID",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = StatusError
                             )
+                            val errorMsg = uiState.errorMessage ?: uiState.validationResult?.errorMessage ?: "Berkas audio rusak, durasi 0, atau terdeteksi fatal clipping."
                             Text(
-                                text = uiState.errorMessage ?: uiState.validationResult?.errorMessage ?: "Berkas audio tidak dapat diputar.",
-                                style = MaterialTheme.typography.labelSmall,
+                                text = errorMsg,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary
+                            )
+                            Text(
+                                text = "Pemutar dinonaktifkan untuk keamanan output. Silakan render ulang.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextMuted
                             )
                         }
                     }
@@ -382,11 +403,15 @@ fun RemixPlaybackMonitor(
                     )
                 }
 
-                // Tombol Utama: ▶ PUTAR / ⏸ JEDA
+                // Tombol Utama: ▶ PUTAR / ⏸ JEDA (Aturan 10: dinonaktifkan jika clipping/invalid)
+                val canPlay = uiState.isRenderedAvailable && !uiState.isRendering &&
+                        uiState.renderedPlaybackStatus != RenderedPlaybackStatus.ERROR &&
+                        (uiState.validationResult?.isValid != false)
+
                 if (!uiState.isRenderedPlaying) {
                     Button(
                         onClick = { onPlayRendered() },
-                        enabled = uiState.isRenderedAvailable && !uiState.isRendering,
+                        enabled = canPlay,
                         shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFF00E676),
@@ -443,7 +468,7 @@ fun RemixPlaybackMonitor(
                 // Tombol ↷ Maju 10 detik
                 IconButton(
                     onClick = { onSeekRelative(10_000L) },
-                    enabled = uiState.isRenderedAvailable && !uiState.isRendering,
+                    enabled = canPlay,
                     modifier = Modifier
                         .size(48.dp)
                         .testTag("seek_forward_button")
@@ -451,19 +476,19 @@ fun RemixPlaybackMonitor(
                     Icon(
                         imageVector = Icons.Default.FastForward,
                         contentDescription = "Maju 10 Detik",
-                        tint = if (uiState.isRenderedAvailable) TextPrimary else TextMuted,
+                        tint = if (canPlay) TextPrimary else TextMuted,
                         modifier = Modifier.size(28.dp)
                     )
                 }
             }
 
             // ==============================================================
-            // 6. MONITOR SUMBER REMIX (ATURAN 10 - DATA NYATA DARI MIX ENGINE)
+            // 6. MASTER CONTENT CHECK (ATURAN 5 - LAPISAN ELEMEN NYATA)
             // ==============================================================
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = StudioSurfaceElevated,
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF101624),
                 border = BorderStroke(1.dp, StudioCardBorder)
             ) {
                 Column(
@@ -472,77 +497,105 @@ fun RemixPlaybackMonitor(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "🎛️ MONITOR SUMBER REMIX (NILAI NYATA MIX ENGINE)",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = NeonCyan
-                    )
-
-                    // 1. Vokal
-                    val vocalPct = (uiState.vocalMixSettings.volume * 100).toInt().coerceIn(0, 100)
-                    MixLevelItem(
-                        icon = "🎤",
-                        label = "Vokal",
-                        fraction = uiState.vocalMixSettings.volume.coerceIn(0f, 1f),
-                        percentageText = "$vocalPct%",
-                        activeColor = NeonCyan
-                    )
-
-                    // 2. Beat
-                    val beatPct = (uiState.beatMixSettings.volume * 100).toInt().coerceIn(0, 100)
-                    MixLevelItem(
-                        icon = "🥁",
-                        label = "Beat",
-                        fraction = uiState.beatMixSettings.volume.coerceIn(0f, 1f),
-                        percentageText = "$beatPct%",
-                        activeColor = NeonAmber
-                    )
-
-                    // 3. Musik (Rata-rata Drum, Bass, Akor, Melodi)
-                    val musicVolume = (
-                        uiState.drumMixSettings.volume +
-                        uiState.bassMixSettings.volume +
-                        uiState.chordMixSettings.volume +
-                        uiState.melodyMixSettings.volume
-                    ) / 4f
-                    val musicPct = (musicVolume * 100).toInt().coerceIn(0, 100)
-                    MixLevelItem(
-                        icon = "🎹",
-                        label = "Musik",
-                        fraction = musicVolume.coerceIn(0f, 1f),
-                        percentageText = "$musicPct%",
-                        activeColor = NeonPink
-                    )
-
-                    // 4. Master Engine
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = "🎛️", fontSize = 12.sp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Mastering",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextPrimary
-                            )
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = Color(0xFF00E676).copy(alpha = 0.2f),
-                            border = BorderStroke(1.dp, Color(0xFF00E676))
+                        Text(
+                            text = "🎛️ ISI MASTER REMIX",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = NeonCyan
+                        )
+                        Text(
+                            text = "Status Mix Engine",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextMuted
+                        )
+                    }
+
+                    // Lapisan Elemen Nyata Master Audio (Aturan 5)
+                    val layers = listOf(
+                        Triple("🎤", "Vocal", uiState.isVocalSelected && !uiState.vocalBusSettings.isMuted && !uiState.vocalMixSettings.isMuted && uiState.vocalMixSettings.volume > 0.05f),
+                        Triple("🥁", "Beat Sumber", uiState.isBeatSelected && !uiState.beatBusSettings.isMuted && !uiState.beatMixSettings.isMuted && uiState.beatMixSettings.volume > 0.05f),
+                        Triple("⚡", "Drum Synth", !uiState.drumBusSettings.isMuted && !uiState.drumMixSettings.isMuted && uiState.drumMixSettings.volume > 0.05f),
+                        Triple("🎸", "Sub-Bass", !uiState.bassBusSettings.isMuted && !uiState.bassMixSettings.isMuted && uiState.bassMixSettings.volume > 0.05f),
+                        Triple("🎹", "Akor Synth", !uiState.musicBusSettings.isMuted && !uiState.chordMixSettings.isMuted && uiState.chordMixSettings.volume > 0.05f),
+                        Triple("🎺", "Melodi Hook", !uiState.musicBusSettings.isMuted && !uiState.melodyMixSettings.isMuted && uiState.melodyMixSettings.volume > 0.05f),
+                        Triple("🌊", "Pad Atmosfer", !uiState.musicBusSettings.isMuted && !uiState.padMixSettings.isMuted && uiState.padMixSettings.volume > 0.05f),
+                        Triple("⚡", "FX Transisi", !uiState.musicBusSettings.isMuted && !uiState.fxMixSettings.isMuted && uiState.fxMixSettings.volume > 0.05f)
+                    )
+
+                    // Tampilkan Grid 2 Kolom untuk kejelasan visual
+                    for (i in layers.indices step 2) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "AKTIF (${(uiState.masterGain * 100).toInt()}%)",
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF00E676)
+                            MasterLayerBadge(
+                                icon = layers[i].first,
+                                name = layers[i].second,
+                                isActive = layers[i].third,
+                                modifier = Modifier.weight(1f)
                             )
+                            if (i + 1 < layers.size) {
+                                MasterLayerBadge(
+                                    icon = layers[i + 1].first,
+                                    name = layers[i + 1].second,
+                                    isActive = layers[i + 1].third,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
+                    }
+                }
+            }
+
+            // ==============================================================
+            // 7. SKEMA AUDIO: MIX BUS KE MASTER (ATURAN 6)
+            // ==============================================================
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFF0C101A),
+                border = BorderStroke(1.dp, Color(0xFF1E283D))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "🛣️ PERJALANAN AUDIO (MIX BUS ➔ MASTER)",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = NeonPink
+                    )
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFF070A12)
+                    ) {
+                        Text(
+                            text = """
+VOCAL  ───────┐
+BEAT   ───────┤
+DRUM   ───────┤
+BASS   ───────┤
+AKOR   ───────┤ ──> [ MIX ENGINE ] ──> [ MASTER BUS ] ──> [ MASTER WAV ] ──> ▶ PLAY
+MELODI ───────┤
+PAD    ───────┤
+FX     ───────┘
+                            """.trimIndent(),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            lineHeight = 13.sp,
+                            color = NeonCyan,
+                            modifier = Modifier.padding(8.dp)
+                        )
                     }
                 }
             }
@@ -601,8 +654,49 @@ private fun MixLevelItem(
     }
 }
 
+@Composable
+private fun MasterLayerBadge(
+    icon: String,
+    name: String,
+    isActive: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = if (isActive) Color(0xFF132A1C) else StudioSurfaceElevated,
+        border = BorderStroke(1.dp, if (isActive) Color(0xFF00E676).copy(alpha = 0.5f) else StudioCardBorder)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = icon, fontSize = 12.sp)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isActive) TextPrimary else TextMuted
+                )
+            }
+            Text(
+                text = if (isActive) "✓ AKTIF" else "○ NONAKTIF",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (isActive) Color(0xFF00E676) else TextMuted
+            )
+        }
+    }
+}
+
 /**
  * Monitor status render berjenjang sesuai Aturan 11.
+ * Tahapan: 1. MIXING, 2. MASTERING, 3. RENDER WAV, 4. VALIDASI, 5. SIAP DIPUTAR
  */
 @Composable
 private fun RenderProgressCard(
@@ -613,7 +707,7 @@ private fun RenderProgressCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
         color = Color(0xFF09141D),
-        border = BorderStroke(1.dp, NeonCyan.copy(alpha = 0.6f))
+        border = BorderStroke(1.dp, NeonAmber.copy(alpha = 0.6f))
     ) {
         Column(
             modifier = Modifier
@@ -627,10 +721,10 @@ private fun RenderProgressCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "🎚️ MERENDER REMIX",
+                    text = "🟡 MERENDER MASTER...",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = NeonCyan
+                    color = NeonAmber
                 )
                 Text(
                     text = "${(progress * 100).toInt()}%",
@@ -651,35 +745,29 @@ private fun RenderProgressCard(
                 trackColor = Color(0xFF132A20)
             )
 
-            // 8 Stage Nyata sesuai Aturan 11
+            // 5 Tahap Nyata sesuai Aturan 11
             val stages = listOf(
-                "ANALISIS",
-                "ARRANGEMENT",
-                "GENERATOR",
-                "VOCAL FX",
-                "MIX",
-                "MASTER",
-                "RENDER WAV",
-                "VALIDASI"
+                "1. MIXING",
+                "2. MASTERING",
+                "3. RENDER WAV",
+                "4. VALIDASI",
+                "5. SIAP DIPUTAR"
             )
 
             // Kalkulasi tahap aktif berdasarkan fraksi progres (0..1)
             val currentStageIndex = when {
-                progress < 0.15f -> 0
-                progress < 0.30f -> 1
-                progress < 0.50f -> 2
-                progress < 0.62f -> 3
-                progress < 0.75f -> 4
-                progress < 0.88f -> 5
-                progress < 0.95f -> 6
-                else -> 7
+                progress < 0.25f -> 0
+                progress < 0.50f -> 1
+                progress < 0.80f -> 2
+                progress < 0.95f -> 3
+                else -> 4
             }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                stages.forEachIndexed { index, name ->
+                stages.forEachIndexed { index, _ ->
                     val isDone = index < currentStageIndex
                     val isCurrent = index == currentStageIndex
                     val dotColor = when {
@@ -689,7 +777,7 @@ private fun RenderProgressCard(
                     }
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size(12.dp)
                             .clip(CircleShape)
                             .background(dotColor)
                     )

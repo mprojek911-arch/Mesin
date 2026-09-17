@@ -45,6 +45,8 @@ import com.autoremix.djslow.engine.mastering.MasteringPreset
 import com.autoremix.djslow.engine.mix.BusSettings
 import com.autoremix.djslow.engine.mix.BusType
 import com.autoremix.djslow.state.UiState
+import kotlin.math.log10
+import kotlin.math.roundToInt
 import com.example.ui.theme.NeonAmber
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonPink
@@ -68,6 +70,7 @@ fun MasteringCard(
     onMasteringPresetChanged: (MasteringPreset) -> Unit,
     onBusVolumeChange: (BusType, Float) -> Unit,
     onBusMuteToggle: (BusType) -> Unit,
+    onBusSoloToggle: (BusType) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -205,6 +208,7 @@ fun MasteringCard(
                     busSettings = uiState.vocalBusSettings,
                     onVolumeChange = { onBusVolumeChange(BusType.VOCAL_BUS, it) },
                     onMuteToggle = { onBusMuteToggle(BusType.VOCAL_BUS) },
+                    onSoloToggle = { onBusSoloToggle(BusType.VOCAL_BUS) },
                     testTag = "vocal_bus"
                 )
 
@@ -214,6 +218,7 @@ fun MasteringCard(
                     busSettings = uiState.beatBusSettings,
                     onVolumeChange = { onBusVolumeChange(BusType.BEAT_BUS, it) },
                     onMuteToggle = { onBusMuteToggle(BusType.BEAT_BUS) },
+                    onSoloToggle = { onBusSoloToggle(BusType.BEAT_BUS) },
                     testTag = "beat_bus"
                 )
 
@@ -223,6 +228,7 @@ fun MasteringCard(
                     busSettings = uiState.drumBusSettings,
                     onVolumeChange = { onBusVolumeChange(BusType.DRUM_BUS, it) },
                     onMuteToggle = { onBusMuteToggle(BusType.DRUM_BUS) },
+                    onSoloToggle = { onBusSoloToggle(BusType.DRUM_BUS) },
                     testTag = "drum_bus"
                 )
 
@@ -232,6 +238,7 @@ fun MasteringCard(
                     busSettings = uiState.bassBusSettings,
                     onVolumeChange = { onBusVolumeChange(BusType.BASS_BUS, it) },
                     onMuteToggle = { onBusMuteToggle(BusType.BASS_BUS) },
+                    onSoloToggle = { onBusSoloToggle(BusType.BASS_BUS) },
                     testTag = "bass_bus"
                 )
 
@@ -241,6 +248,7 @@ fun MasteringCard(
                     busSettings = uiState.musicBusSettings,
                     onVolumeChange = { onBusVolumeChange(BusType.MUSIC_BUS, it) },
                     onMuteToggle = { onBusMuteToggle(BusType.MUSIC_BUS) },
+                    onSoloToggle = { onBusSoloToggle(BusType.MUSIC_BUS) },
                     testTag = "music_bus"
                 )
 
@@ -250,6 +258,7 @@ fun MasteringCard(
                     busSettings = uiState.masterBusSettings,
                     onVolumeChange = { onBusVolumeChange(BusType.MASTER_BUS, it) },
                     onMuteToggle = { onBusMuteToggle(BusType.MASTER_BUS) },
+                    onSoloToggle = { onBusSoloToggle(BusType.MASTER_BUS) },
                     testTag = "master_bus"
                 )
             }
@@ -413,61 +422,115 @@ private fun BusControlRow(
     busSettings: BusSettings,
     onVolumeChange: (Float) -> Unit,
     onMuteToggle: () -> Unit,
+    onSoloToggle: () -> Unit,
     testTag: String
 ) {
+    val percent = (busSettings.volume * 100).roundToInt()
+    val volumeLabel = if (busSettings.volume > 1.005f) {
+        val db = 20.0 * log10(busSettings.volume.toDouble())
+        String.format(java.util.Locale.US, "%d%%\n+%.1f dB", percent, db)
+    } else {
+        "$percent%"
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = Color(0xFF141A28)
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF141A28),
+        border = if (busSettings.isSolo) androidx.compose.foundation.BorderStroke(1.dp, NeonCyan) else null
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = color,
-                modifier = Modifier.width(135.dp)
-            )
-
-            Slider(
-                value = busSettings.volume,
-                onValueChange = onVolumeChange,
-                valueRange = 0.0f..1.5f,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("${testTag}_slider"),
-                colors = SliderDefaults.colors(
-                    thumbColor = color,
-                    activeTrackColor = color,
-                    inactiveTrackColor = Color(0xFF263044)
-                )
-            )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Surface(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .clickable { onMuteToggle() }
-                    .testTag("${testTag}_mute"),
-                shape = RoundedCornerShape(4.dp),
-                color = if (busSettings.isMuted) Color(0xFFFF5252).copy(alpha = 0.25f) else Color(0xFF1E2638),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (busSettings.isMuted) Color(0xFFFF5252) else Color(0xFF2D3850)
-                )
+            // Baris 1: [NAMA TRACK] & Nilai Volume / dB
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (busSettings.isMuted) "MUTED" else "ON",
-                    fontSize = 10.sp,
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = if (busSettings.isMuted) Color(0xFFFF5252) else TextSecondary,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    color = color
+                )
+
+                Text(
+                    text = volumeLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (busSettings.volume > 1.005f) NeonAmber else TextPrimary
+                )
+            }
+
+            // Baris 2: MUTE, SOLO, Slider
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Tombol MUTE
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onMuteToggle() }
+                        .testTag("${testTag}_mute"),
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (busSettings.isMuted) Color(0xFFFF5252).copy(alpha = 0.35f) else Color(0xFF1E2638),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (busSettings.isMuted) Color(0xFFFF5252) else Color(0xFF2D3850)
+                    )
+                ) {
+                    Text(
+                        text = "MUTE",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (busSettings.isMuted) Color(0xFFFF5252) else TextSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Tombol SOLO
+                Surface(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onSoloToggle() }
+                        .testTag("${testTag}_solo"),
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (busSettings.isSolo) NeonCyan.copy(alpha = 0.35f) else Color(0xFF1E2638),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (busSettings.isSolo) NeonCyan else Color(0xFF2D3850)
+                    )
+                ) {
+                    Text(
+                        text = "SOLO",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (busSettings.isSolo) NeonCyan else TextSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Slider(
+                    value = busSettings.volume,
+                    onValueChange = onVolumeChange,
+                    valueRange = 0.0f..1.5f,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("${testTag}_slider"),
+                    colors = SliderDefaults.colors(
+                        thumbColor = color,
+                        activeTrackColor = color,
+                        inactiveTrackColor = Color(0xFF263044)
+                    )
                 )
             }
         }

@@ -45,11 +45,22 @@ object AudioMemoryManager {
     /**
      * Mencatat status pemakaian memori ke LogChat dan sistem logcat.
      */
-    fun logMemoryUsage(contextTag: String) {
+    fun logMemoryUsage(
+        contextTag: String,
+        blockFrames: Int = 0,
+        activeBuffers: Int = 0,
+        estimatedPcmMb: Double = 0.0
+    ) {
         val snap = getMemorySnapshot()
+        val heapUsedMb = snap.totalMemoryMb - snap.freeMemoryMb
+        val extraInfo = buildString {
+            if (blockFrames > 0) append(" BlockFrames=$blockFrames")
+            if (activeBuffers > 0) append(" ActiveBuffers=$activeBuffers")
+            if (estimatedPcmMb > 0.0) append(String.format(" EstPcm=%.1fMB", estimatedPcmMb))
+        }
         LogChatManager.info(
             module = LogModule.SYSTEM,
-            message = "[INFO] [MEMORY] $contextTag: Avail=${snap.availableHeapMb}MB (Free=${snap.freeMemoryMb}MB, Total=${snap.totalMemoryMb}MB, Max=${snap.maxMemoryMb}MB)"
+            message = "[INFO] [MEMORY] $contextTag: HeapUsed=${heapUsedMb}MB / Max=${snap.maxMemoryMb}MB (Avail=${snap.availableHeapMb}MB, Free=${snap.freeMemoryMb}MB)$extraInfo"
         )
     }
 

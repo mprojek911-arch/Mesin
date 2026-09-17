@@ -243,7 +243,63 @@ object MelodyEngine {
     }
 
     /**
-     * Merender melodi menjadi buffer PCM stereo Float32.
+     * Merender satu blok melodi secara streaming langsung ke [outBuffer] pada [offset].
+     */
+    fun renderMelodyBlock(
+        events: List<MelodyEvent>,
+        startFrame: Long,
+        frameCount: Int,
+        sampleRate: Int,
+        outBuffer: FloatArray,
+        offset: Int = 0
+    ) {
+        val channels = 2
+        val endFrame = startFrame + frameCount
+
+        for (event in events) {
+            val eventStart = event.sampleOffset
+            val duration = min(event.durationSamples, (sampleRate * 2.0).toInt())
+            val eventEnd = eventStart + duration
+            if (eventEnd <= startFrame || eventStart >= endFrame) continue
+
+            val overlapStart = maxOf(startFrame, eventStart)
+            val overlapEnd = minOf(endFrame, eventEnd)
+
+            val freq1 = event.pitchHz
+            val freq2 = event.pitchHz * 1.004f
+            val vel = event.velocity
+            val attackSamples = (sampleRate * 0.015).toInt()
+            val releaseSamples = (sampleRate * 0.05).toInt()
+
+            for (f in overlapStart until overlapEnd) {
+                val i = (f - eventStart).toInt()
+                val outIdx = offset + ((f - startFrame) * channels).toInt()
+                if (outIdx + 1 >= outBuffer.size) break
+
+                val t = i.toDouble() / sampleRate
+                val env = when {
+                    i < attackSamples -> (i.toDouble() / attackSamples)
+                    i > duration - releaseSamples -> ((duration - i).toDouble() / releaseSamples)
+                    else -> exp(-t * 2.5) * 0.85 + 0.15
+                }
+
+                val phase1 = 2.0 * PI * freq1 * i / sampleRate
+                val phase2 = 2.0 * PI * freq2 * i / sampleRate
+
+                val voiceL = sin(phase1) * 0.6 + sin(phase1 * 2.0) * 0.25 + sin(phase1 * 3.0) * 0.15
+                val voiceR = sin(phase2) * 0.6 + sin(phase2 * 2.0) * 0.25 + sin(phase2 * 3.0) * 0.15
+
+                val sampleL = (voiceL * env * vel * 0.45f).toFloat()
+                val sampleR = (voiceR * env * vel * 0.45f).toFloat()
+
+                outBuffer[outIdx] += sampleL
+                outBuffer[outIdx + 1] += sampleR
+            }
+        }
+    }
+
+    /**
+     * Merender melodi menjadi buffer PCM stereo Float32 menggunakan pemrosesan per blok.
      * Menggunakan sintesis Lead Synth dengan dua osilator detuned + envelope decay ekspresif.
      */
     fun renderMelody(
@@ -256,45 +312,13 @@ object MelodyEngine {
         val totalFloats = (safeSamples * channels).toInt().coerceAtLeast(channels)
         val buffer = FloatArray(totalFloats)
 
-        for (event in events) {
-            val startIdx = (event.sampleOffset * channels).toInt()
-            if (startIdx >= buffer.size) continue
-
-            val duration = min(event.durationSamples, (sampleRate * 2.0).toInt())
-            val freq1 = event.pitchHz
-            val freq2 = event.pitchHz * 1.004f // Sedikit detune untuk stereo spread mewah
-            val vel = event.velocity
-
-            var phase1 = 0.0
-            var phase2 = 0.0
-
-            val attackSamples = (sampleRate * 0.015).toInt()
-            val releaseSamples = (sampleRate * 0.05).toInt()
-
-            for (i in 0 until duration) {
-                val outIdx = startIdx + i * channels
-                if (outIdx + 1 >= buffer.size) break
-
-                val t = i.toDouble() / sampleRate
-                val env = when {
-                    i < attackSamples -> (i.toDouble() / attackSamples)
-                    i > duration - releaseSamples -> ((duration - i).toDouble() / releaseSamples)
-                    else -> exp(-t * 2.5) * 0.85 + 0.15
-                }
-
-                phase1 += 2.0 * PI * freq1 / sampleRate
-                phase2 += 2.0 * PI * freq2 / sampleRate
-
-                // Saw-like wave (fundamental + harmonik ke-2 & ke-3)
-                val voiceL = sin(phase1) * 0.6 + sin(phase1 * 2.0) * 0.25 + sin(phase1 * 3.0) * 0.15
-                val voiceR = sin(phase2) * 0.6 + sin(phase2 * 2.0) * 0.25 + sin(phase2 * 3.0) * 0.15
-
-                val sampleL = (voiceL * env * vel * 0.45f).toFloat()
-                val sampleR = (voiceR * env * vel * 0.45f).toFloat()
-
-                buffer[outIdx] += sampleL
-                buffer[outIdx + 1] += sampleR
-            }
+        val blockFrames = 16384
+        var current = 0L
+        while (current < safeSamples) {
+            val count = minOf(blockFrames.toLong(), safeSamples - current).toInt()
+            val offset = (current * channels).toInt()
+            renderMelodyBlock(events, current, count, sampleRate, buffer, offset)
+            current += count
         }
 
         return AudioPcmData(

@@ -136,7 +136,76 @@ object BassEngine {
     }
 
     /**
-     * Merender daftar event Bass ke buffer PCM Float32 Stereo 44.1 kHz.
+     * Merender satu blok bass secara streaming langsung ke [outBuffer] pada [offset].
+     */
+    fun renderBassBlock(
+        bassEvents: List<TimelineEvent.BassEvent>,
+        startFrame: Long,
+        frameCount: Int,
+        sampleRate: Int,
+        outBuffer: FloatArray,
+        offset: Int = 0,
+        volume: Float = 0.85f
+    ) {
+        val channels = 2
+        val endFrame = startFrame + frameCount
+
+        for (event in bassEvents) {
+            val eventStart = event.startSample
+            val eventEnd = event.endSample
+            if (eventEnd <= startFrame || eventStart >= endFrame) continue
+
+            val overlapStart = maxOf(startFrame, eventStart)
+            val overlapEnd = minOf(endFrame, eventEnd)
+            val numFrames = (eventEnd - eventStart).toInt()
+            if (numFrames <= 0) continue
+
+            val baseFreq = event.frequencyHz
+            val hitVolume = event.velocity * volume
+            val adsr = AdsrEnvelope(
+                params = AdsrParams(
+                    attackSeconds = 0.008f,
+                    decaySeconds = 0.18f,
+                    sustainLevel = 0.65f,
+                    releaseSeconds = 0.10f
+                ),
+                totalFrames = numFrames.toLong(),
+                sampleRate = sampleRate
+            )
+
+            val pitchEnvelopeFrames = (0.045f * sampleRate).toInt()
+
+            for (f in overlapStart until overlapEnd) {
+                val relFrame = (f - eventStart).toInt()
+                val outIdx = offset + ((f - startFrame) * channels).toInt()
+                if (outIdx + 1 >= outBuffer.size) break
+
+                val pitchMultiplier = if (relFrame < pitchEnvelopeFrames) {
+                    1.0f + 0.8f * (1.0f - (relFrame.toFloat() / pitchEnvelopeFrames))
+                } else {
+                    1.0f
+                }
+
+                val currentFreq = baseFreq * pitchMultiplier
+                val phaseSub = (2.0 * PI * currentFreq * relFrame) / sampleRate
+                val phaseHarmonic = (2.0 * PI * currentFreq * 2.0 * relFrame) / sampleRate
+
+                val subSample = sin(phaseSub).toFloat()
+                val harmSample = (sin(phaseHarmonic) * 0.25).toFloat()
+                val rawSample = subSample + harmSample
+                val saturated = tanh((rawSample * 1.35).toDouble()).toFloat()
+
+                val envelope = adsr.getGain(relFrame.toLong())
+                val sampleOut = saturated * hitVolume * envelope
+
+                outBuffer[outIdx] += sampleOut
+                outBuffer[outIdx + 1] += sampleOut
+            }
+        }
+    }
+
+    /**
+     * Merender daftar event Bass ke buffer PCM Float32 Stereo 44.1 kHz menggunakan pemrosesan per blok.
      */
     fun renderBassPcm(
         timeline: MasterTimeline,
@@ -155,28 +224,17 @@ object BassEngine {
 
         onProgress?.invoke(0.1f, "Mempersiapkan synthesizer bass...")
 
-        val totalEvents = bassEvents.size
-        bassEvents.forEachIndexed { index, event ->
-            val startFrame = event.startSample.toInt()
-            val endFrame = minOf(event.endSample.toInt(), totalFrames)
-            val numFrames = endFrame - startFrame
+        val blockFrames = 16384
+        var current = 0L
+        val safeSamples = totalFrames.toLong()
+        while (current < safeSamples) {
+            val count = minOf(blockFrames.toLong(), safeSamples - current).toInt()
+            val offset = (current * channels).toInt()
+            renderBassBlock(bassEvents, current, count, sampleRate, samples, offset, volume)
+            current += count
 
-            if (numFrames > 0 && startFrame < totalFrames) {
-                renderSingleBassHit(
-                    event = event,
-                    startFrame = startFrame,
-                    numFrames = numFrames,
-                    targetSamples = samples,
-                    channels = channels,
-                    sampleRate = sampleRate,
-                    masterVolume = volume
-                )
-            }
-
-            if (index % 8 == 0) {
-                val prog = 0.1f + 0.85f * (index.toFloat() / totalEvents)
-                onProgress?.invoke(prog, "Merender bass track (${index + 1}/$totalEvents)...")
-            }
+            val prog = 0.1f + 0.85f * (current.toFloat() / safeSamples.toFloat())
+            onProgress?.invoke(prog, "Merender bass track...")
         }
 
         onProgress?.invoke(1.0f, "Sintesis bass selesai.")

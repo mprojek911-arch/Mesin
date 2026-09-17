@@ -499,6 +499,17 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    fun onBusSoloToggle(busType: BusType) {
+        when (busType) {
+            BusType.VOCAL_BUS -> _vocalBusSettings.value = _vocalBusSettings.value.copy(isSolo = !_vocalBusSettings.value.isSolo)
+            BusType.BEAT_BUS -> _beatBusSettings.value = _beatBusSettings.value.copy(isSolo = !_beatBusSettings.value.isSolo)
+            BusType.DRUM_BUS -> _drumBusSettings.value = _drumBusSettings.value.copy(isSolo = !_drumBusSettings.value.isSolo)
+            BusType.BASS_BUS -> _bassBusSettings.value = _bassBusSettings.value.copy(isSolo = !_bassBusSettings.value.isSolo)
+            BusType.MUSIC_BUS -> _musicBusSettings.value = _musicBusSettings.value.copy(isSolo = !_musicBusSettings.value.isSolo)
+            BusType.MASTER_BUS -> {}
+        }
+    }
+
     fun onMasterGainChange(gain: Float) {
         _masterGain.value = gain.coerceIn(0.0f, 1.5f)
     }

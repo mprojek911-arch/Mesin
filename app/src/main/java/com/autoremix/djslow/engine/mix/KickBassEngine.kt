@@ -24,7 +24,8 @@ object KickBassEngine {
         drumEvents: List<DrumEvent>,
         sampleRate: Int,
         duckingDepth: Float = 0.65f, // Bass turun hingga 35% saat kick memukul
-        releaseTimeMs: Float = 140f   // Waktu pemulihan bass setelah kick
+        releaseTimeMs: Float = 140f,  // Waktu pemulihan bass setelah kick
+        inPlace: Boolean = true
     ): AudioPcmData {
         val samples = bassPcm.samples
         val channels = bassPcm.channels
@@ -34,7 +35,7 @@ object KickBassEngine {
         if (kickEvents.isEmpty()) return bassPcm
 
         val releaseSamples = ((releaseTimeMs / 1000f) * sampleRate).toInt().coerceAtLeast(1)
-        val output = samples.copyOf()
+        val output = if (inPlace) samples else samples.copyOf()
 
         for (kick in kickEvents) {
             val startSample = kick.sampleOffset

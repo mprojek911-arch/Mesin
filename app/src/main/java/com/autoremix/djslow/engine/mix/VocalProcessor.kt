@@ -3,9 +3,116 @@ package com.autoremix.djslow.engine.mix
 import com.autoremix.djslow.engine.dsp.BiquadFilter
 import com.autoremix.djslow.engine.dsp.DynamicsCompressor
 import com.autoremix.djslow.engine.dsp.StereoEngine
+import com.autoremix.djslow.engine.pcm.AudioBufferPool
 import com.autoremix.djslow.engine.pcm.AudioPcmData
 import kotlin.math.abs
 import kotlin.math.max
+
+/**
+ * State DSP Vokal yang persisten untuk pemrosesan streaming per blok.
+ */
+class VocalBlockProcessor(val sampleRate: Int = 44100, val channels: Int = 2) {
+    private val hpf = BiquadFilter(
+        type = BiquadFilter.FilterType.HIGH_PASS,
+        frequencyHz = 85.0f,
+        sampleRate = sampleRate,
+        q = 0.7071f
+    )
+    private val mudFilter = BiquadFilter(
+        type = BiquadFilter.FilterType.PEAKING_EQ,
+        frequencyHz = 320.0f,
+        sampleRate = sampleRate,
+        q = 1.0f,
+        gainDb = -2.0f
+    )
+    private val presenceFilter = BiquadFilter(
+        type = BiquadFilter.FilterType.PEAKING_EQ,
+        frequencyHz = 3400.0f,
+        sampleRate = sampleRate,
+        q = 1.2f,
+        gainDb = 2.2f
+    )
+    private val airFilter = BiquadFilter(
+        type = BiquadFilter.FilterType.HIGH_SHELF,
+        frequencyHz = 10500.0f,
+        sampleRate = sampleRate,
+        gainDb = 1.8f
+    )
+    private val vocalComp = DynamicsCompressor(
+        thresholdDb = -18.0f,
+        ratio = 2.4f,
+        attackMs = 15.0f,
+        releaseMs = 100.0f,
+        kneeWidthDb = 4.0f,
+        makeupGainDb = 0.8f,
+        sampleRate = sampleRate
+    )
+    private val sibilanceFilter = BiquadFilter(
+        type = BiquadFilter.FilterType.PEAKING_EQ,
+        frequencyHz = 7200.0f,
+        sampleRate = sampleRate,
+        q = 2.0f,
+        gainDb = 6.0f
+    )
+    private var deEssGain = 1.0f
+
+    fun processBlock(blockSamples: FloatArray) {
+        if (blockSamples.isEmpty()) return
+
+        hpf.processInterleaved(blockSamples, channels)
+        mudFilter.processInterleaved(blockSamples, channels)
+        presenceFilter.processInterleaved(blockSamples, channels)
+        airFilter.processInterleaved(blockSamples, channels)
+        vocalComp.processInterleaved(blockSamples, channels)
+
+        // De-esser menggunakan buffer deteksi sementara dari pool (hanya seukuran blok)
+        val tempDetection = AudioBufferPool.acquire(blockSamples.size)
+        try {
+            System.arraycopy(blockSamples, 0, tempDetection, 0, blockSamples.size)
+            sibilanceFilter.processInterleaved(tempDetection, channels)
+
+            val totalFrames = blockSamples.size / channels
+            val attack = 0.20f
+            val release = 0.05f
+
+            for (f in 0 until totalFrames) {
+                val idxL = f * channels
+                val idxR = if (channels > 1) idxL + 1 else idxL
+
+                val sibLevel = max(abs(tempDetection[idxL]), abs(tempDetection[idxR]))
+                val targetGain = if (sibLevel > 0.40f) {
+                    val over = (sibLevel - 0.40f) * 1.5f
+                    (1.0f - over.coerceIn(0.0f, 0.32f))
+                } else {
+                    1.0f
+                }
+
+                deEssGain = if (targetGain < deEssGain) {
+                    (1.0f - attack) * deEssGain + attack * targetGain
+                } else {
+                    (1.0f - release) * deEssGain + release * targetGain
+                }
+
+                blockSamples[idxL] *= deEssGain
+                if (channels > 1) {
+                    blockSamples[idxR] *= deEssGain
+                }
+            }
+        } finally {
+            AudioBufferPool.release(tempDetection)
+        }
+
+        if (channels == 2) {
+            StereoEngine.applyStereoAmbience(
+                samples = blockSamples,
+                sampleRate = sampleRate,
+                delayMs = 28.0f,
+                feedback = 0.10f,
+                wetLevel = 0.12f
+            )
+        }
+    }
+}
 
 /**
  * Pemroses Vokal Profesional (Tahap 5).
@@ -18,8 +125,8 @@ import kotlin.math.max
  */
 object VocalProcessor {
 
-    fun process(vocalPcm: AudioPcmData): AudioPcmData {
-        val samples = vocalPcm.samples.copyOf()
+    fun process(vocalPcm: AudioPcmData, inPlace: Boolean = true): AudioPcmData {
+        val samples = if (inPlace) vocalPcm.samples else vocalPcm.samples.copyOf()
         val sampleRate = vocalPcm.sampleRate
         val channels = vocalPcm.channels
 
@@ -27,116 +134,9 @@ object VocalProcessor {
             return vocalPcm
         }
 
-        // 1. High Pass Filter (85 Hz)
-        val hpf = BiquadFilter(
-            type = BiquadFilter.FilterType.HIGH_PASS,
-            frequencyHz = 85.0f,
-            sampleRate = sampleRate,
-            q = 0.7071f
-        )
-        hpf.processInterleaved(samples, channels)
-
-        // 2. EQ Vokal
-        // a. Mud cut di 320 Hz (-2.0 dB)
-        val mudFilter = BiquadFilter(
-            type = BiquadFilter.FilterType.PEAKING_EQ,
-            frequencyHz = 320.0f,
-            sampleRate = sampleRate,
-            q = 1.0f,
-            gainDb = -2.0f
-        )
-        mudFilter.processInterleaved(samples, channels)
-
-        // b. Presence boost di 3400 Hz (+2.2 dB)
-        val presenceFilter = BiquadFilter(
-            type = BiquadFilter.FilterType.PEAKING_EQ,
-            frequencyHz = 3400.0f,
-            sampleRate = sampleRate,
-            q = 1.2f,
-            gainDb = 2.2f
-        )
-        presenceFilter.processInterleaved(samples, channels)
-
-        // c. Air shelf di 10500 Hz (+1.8 dB)
-        val airFilter = BiquadFilter(
-            type = BiquadFilter.FilterType.HIGH_SHELF,
-            frequencyHz = 10500.0f,
-            sampleRate = sampleRate,
-            gainDb = 1.8f
-        )
-        airFilter.processInterleaved(samples, channels)
-
-        // 3. Kompresi Vokal Ringan
-        val vocalComp = DynamicsCompressor(
-            thresholdDb = -18.0f,
-            ratio = 2.4f,
-            attackMs = 15.0f,
-            releaseMs = 100.0f,
-            kneeWidthDb = 4.0f,
-            makeupGainDb = 0.8f,
-            sampleRate = sampleRate
-        )
-        vocalComp.processInterleaved(samples, channels)
-
-        // 4. De-esser Lembut
-        applyDeEsser(samples, sampleRate, channels)
-
-        // 5. Reverb / Ambience Halus (wet 12%)
-        if (channels == 2) {
-            StereoEngine.applyStereoAmbience(
-                samples = samples,
-                sampleRate = sampleRate,
-                delayMs = 28.0f,
-                feedback = 0.10f,
-                wetLevel = 0.12f
-            )
-        }
+        val processor = VocalBlockProcessor(sampleRate, channels)
+        processor.processBlock(samples)
 
         return AudioPcmData(samples, sampleRate, channels)
-    }
-
-    /**
-     * De-esser berbasis deteksi energi sibilansi frekuensi tinggi (7 kHz).
-     */
-    private fun applyDeEsser(samples: FloatArray, sampleRate: Int, channels: Int) {
-        val totalFrames = samples.size / channels
-        val sibilanceFilter = BiquadFilter(
-            type = BiquadFilter.FilterType.PEAKING_EQ,
-            frequencyHz = 7200.0f,
-            sampleRate = sampleRate,
-            q = 2.0f,
-            gainDb = 6.0f // boost untuk deteksi sensitif
-        )
-        val detectionCopy = samples.copyOf()
-        sibilanceFilter.processInterleaved(detectionCopy, channels)
-
-        var deEssGain = 1.0f
-        val attack = 0.20f
-        val release = 0.05f
-
-        for (f in 0 until totalFrames) {
-            val idxL = f * channels
-            val idxR = if (channels > 1) idxL + 1 else idxL
-
-            val sibLevel = max(abs(detectionCopy[idxL]), abs(detectionCopy[idxR]))
-            val targetGain = if (sibLevel > 0.40f) {
-                // Reduksi sibilansi maksimal ~3.5 dB
-                val over = (sibLevel - 0.40f) * 1.5f
-                (1.0f - over.coerceIn(0.0f, 0.32f))
-            } else {
-                1.0f
-            }
-
-            deEssGain = if (targetGain < deEssGain) {
-                (1.0f - attack) * deEssGain + attack * targetGain
-            } else {
-                (1.0f - release) * deEssGain + release * targetGain
-            }
-
-            samples[idxL] *= deEssGain
-            if (channels > 1) {
-                samples[idxR] *= deEssGain
-            }
-        }
     }
 }

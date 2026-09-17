@@ -119,6 +119,13 @@ class AudioPlayer(
     }
 
     fun play() {
+        // Cegah double playback: hentikan pemutar master jika sedang aktif (Aturan 13 & 14)
+        try {
+            renderedMediaPlayer?.let { if (it.isPlaying) it.pause() }
+            unmasteredMediaPlayer?.let { if (it.isPlaying) it.pause() }
+            _audioState.update { it.copy(isRenderedPlaying = false, isRenderedPaused = false) }
+        } catch (_: Exception) {}
+
         var anyPlayed = false
         var errorOccurred = false
         var lastError: Throwable? = null
@@ -425,10 +432,11 @@ class AudioPlayer(
                 return Result.failure(ex)
             }
 
-            // 1. Stop / pause source player lain (Aturan 6)
+            // 1. Stop / pause source player lain (Aturan 6 & 13: Single Master Playback)
             stopVocalInternal()
             stopBeatInternal()
             unmasteredMediaPlayer?.let { if (it.isPlaying) it.pause() }
+            _audioState.update { it.copy(playbackState = PlaybackEngineState.BERHENTI) }
 
             // 2. Load hasil remix jika belum
             val player = renderedMediaPlayer ?: run {

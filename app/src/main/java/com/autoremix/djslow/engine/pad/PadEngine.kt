@@ -110,8 +110,77 @@ object PadEngine {
     private data class Quad(val f1: Float, val f2: Float, val f3: Float, val f4: Float)
 
     /**
-     * Merender pad hangat ke audio PCM Stereo Float32 murni.
-     * Menggunakan multi-voice sinusoidal detuned pad dengan low-pass filtering.
+     * Merender satu blok audio pad (chunk-based) langsung ke dalam [outBlock] pada [offset].
+     * Hanya mengevaluasi pad events yang aktif pada rentang waktu [startFrame] s/d [startFrame + frameCount].
+     * Tidak mengalokasikan array PCM full-track di memori RAM.
+     */
+    fun renderPadBlock(
+        events: List<PadEvent>,
+        startFrame: Long,
+        frameCount: Int,
+        sampleRate: Int,
+        outBlock: FloatArray,
+        offset: Int = 0
+    ) {
+        val channels = 2
+        val endFrame = startFrame + frameCount
+
+        for (event in events) {
+            val eventStart = event.sampleOffset
+            val eventEnd = event.sampleOffset + event.durationSamples
+
+            if (eventEnd <= startFrame || eventStart >= endFrame) {
+                continue // Event tidak overlap dengan blok ini
+            }
+
+            val overlapStart = max(startFrame, eventStart)
+            val overlapEnd = min(endFrame, eventEnd)
+            val dur = event.durationSamples
+            if (dur <= 0) continue
+
+            val attackSamples = ((event.attackMs / 1000f) * sampleRate).toInt().coerceAtLeast(100)
+            val releaseSamples = ((event.releaseMs / 1000f) * sampleRate).toInt().coerceAtLeast(100)
+            val freqs = event.chord.getFrequenciesHz(octave = 3)
+            val norm = 1.0 / maxOf(1, freqs.size)
+
+            for (f in overlapStart until overlapEnd) {
+                val relSample = (f - eventStart).toInt()
+                val outIdx = offset + ((f - startFrame) * channels).toInt()
+                if (outIdx + 1 >= outBlock.size) break
+
+                val env = when {
+                    relSample < attackSamples -> (relSample.toDouble() / attackSamples)
+                    relSample > dur - releaseSamples -> ((dur - relSample).toDouble() / releaseSamples)
+                    else -> 1.0
+                }
+
+                var sumL = 0.0
+                var sumR = 0.0
+
+                for (idx in freqs.indices) {
+                    val baseFreq = freqs[idx]
+                    val detuneFreq = baseFreq * 1.003
+                    val phaseBase = 2.0 * PI * baseFreq * relSample / sampleRate
+                    val phaseDetune = 2.0 * PI * detuneFreq * relSample / sampleRate
+
+                    val v1 = sin(phaseBase) + 0.3 * sin(phaseBase * 0.5)
+                    val v2 = sin(phaseDetune) + 0.3 * sin(phaseDetune * 0.5)
+
+                    sumL += v1
+                    sumR += v2
+                }
+
+                val sampleL = (sumL * norm * env * event.velocity * 0.40f).toFloat()
+                val sampleR = (sumR * norm * env * event.velocity * 0.40f).toFloat()
+
+                outBlock[outIdx] += sampleL
+                outBlock[outIdx + 1] += sampleR
+            }
+        }
+    }
+
+    /**
+     * Merender pad hangat ke audio PCM Stereo Float32 murni menggunakan pemrosesan per blok.
      */
     fun renderPad(
         events: List<PadEvent>,
@@ -123,57 +192,13 @@ object PadEngine {
         val totalFloats = (safeSamples * channels).toInt().coerceAtLeast(channels)
         val buffer = FloatArray(totalFloats)
 
-        for (event in events) {
-            val startIdx = (event.sampleOffset * channels).toInt()
-            if (startIdx >= buffer.size) continue
-
-            // Ambil frekuensi penyusun akor di oktaf 3 & 4 (hangat)
-            val freqs = event.chord.getFrequenciesHz(octave = 3)
-            val duration = min(event.durationSamples, (totalSamples - event.sampleOffset).toInt())
-            if (duration <= 0) continue
-
-            val attackSamples = ((event.attackMs / 1000f) * sampleRate).toInt().coerceAtLeast(100)
-            val releaseSamples = ((event.releaseMs / 1000f) * sampleRate).toInt().coerceAtLeast(100)
-
-            val phases = DoubleArray(freqs.size)
-            val detunedPhases = DoubleArray(freqs.size)
-
-            for (i in 0 until duration) {
-                val outIdx = startIdx + i * channels
-                if (outIdx + 1 >= buffer.size) break
-
-                // Envelope ADSR halus
-                val env = when {
-                    i < attackSamples -> (i.toDouble() / attackSamples)
-                    i > duration - releaseSamples -> ((duration - i).toDouble() / releaseSamples)
-                    else -> 1.0
-                }
-
-                var sumL = 0.0
-                var sumR = 0.0
-
-                for (f in freqs.indices) {
-                    val baseFreq = freqs[f]
-                    val detuneFreq = baseFreq * 1.003
-
-                    phases[f] += 2.0 * PI * baseFreq / sampleRate
-                    detunedPhases[f] += 2.0 * PI * detuneFreq / sampleRate
-
-                    // Sine murni dengan sub-harmonik halus (warm pad feel)
-                    val v1 = sin(phases[f]) + 0.3 * sin(phases[f] * 0.5)
-                    val v2 = sin(detunedPhases[f]) + 0.3 * sin(detunedPhases[f] * 0.5)
-
-                    sumL += v1
-                    sumR += v2
-                }
-
-                val norm = 1.0 / maxOf(1, freqs.size)
-                val sampleL = (sumL * norm * env * event.velocity * 0.40f).toFloat()
-                val sampleR = (sumR * norm * env * event.velocity * 0.40f).toFloat()
-
-                buffer[outIdx] += sampleL
-                buffer[outIdx + 1] += sampleR
-            }
+        val blockFrames = 16384
+        var current = 0L
+        while (current < safeSamples) {
+            val count = minOf(blockFrames.toLong(), safeSamples - current).toInt()
+            val offset = (current * channels).toInt()
+            renderPadBlock(events, current, count, sampleRate, buffer, offset)
+            current += count
         }
 
         return AudioPcmData(
