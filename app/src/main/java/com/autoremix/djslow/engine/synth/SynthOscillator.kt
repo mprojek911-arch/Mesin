@@ -21,7 +21,7 @@ class SynthOscillator(
     var frequencyHz: Float = 440.0f,
     var sampleRate: Int = 44100
 ) {
-    private var phase: Double = 0.0
+    var phase: Double = 0.0
 
     fun resetPhase() {
         phase = 0.0

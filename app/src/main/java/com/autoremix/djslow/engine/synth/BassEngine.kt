@@ -3,6 +3,7 @@ package com.autoremix.djslow.engine.synth
 import com.autoremix.djslow.engine.music.Chord
 import com.autoremix.djslow.engine.music.MusicKey
 import com.autoremix.djslow.engine.music.PitchClass
+import com.autoremix.djslow.engine.pcm.AudioBufferPool
 import com.autoremix.djslow.engine.pcm.AudioPcmData
 import com.autoremix.djslow.engine.timeline.MasterTimeline
 import com.autoremix.djslow.engine.timeline.TimelineEvent
@@ -227,14 +228,22 @@ object BassEngine {
         val blockFrames = 16384
         var current = 0L
         val safeSamples = totalFrames.toLong()
-        while (current < safeSamples) {
-            val count = minOf(blockFrames.toLong(), safeSamples - current).toInt()
-            val offset = (current * channels).toInt()
-            renderBassBlock(bassEvents, current, count, sampleRate, samples, offset, volume)
-            current += count
+        val chunkBuffer = AudioBufferPool.acquire(blockFrames * channels)
+        try {
+            while (current < safeSamples) {
+                val count = minOf(blockFrames.toLong(), safeSamples - current).toInt()
+                chunkBuffer.fill(0.0f, 0, count * channels)
+                renderBassBlock(bassEvents, current, count, sampleRate, chunkBuffer, 0, volume)
 
-            val prog = 0.1f + 0.85f * (current.toFloat() / safeSamples.toFloat())
-            onProgress?.invoke(prog, "Merender bass track...")
+                val destOffset = (current * channels).toInt()
+                System.arraycopy(chunkBuffer, 0, samples, destOffset, count * channels)
+                current += count
+
+                val prog = 0.1f + 0.85f * (current.toFloat() / safeSamples.toFloat())
+                onProgress?.invoke(prog, "Merender bass track...")
+            }
+        } finally {
+            AudioBufferPool.release(chunkBuffer)
         }
 
         onProgress?.invoke(1.0f, "Sintesis bass selesai.")

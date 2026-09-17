@@ -1,5 +1,6 @@
 package com.autoremix.djslow.engine.mix
 
+import com.autoremix.djslow.engine.pcm.AudioBufferPool
 import com.autoremix.djslow.engine.pcm.AudioPcmData
 import kotlin.math.abs
 
@@ -151,75 +152,93 @@ object MixEngine {
         onProgress?.invoke(0.20f, "Menggabungkan sinyal audio melalui Mix Bus...")
 
         var maxPeakBeforeLimit = 0.0f
-        val chunkSize = 44100
-        var framesProcessed = 0
+        val blockFrames = 16384
+        val tempBlockSize = blockFrames * channels
+        val chunkBuffer = AudioBufferPool.acquire(tempBlockSize)
+        var current = 0
 
-        for (f in 0 until totalFrames) {
-            val iL = f * 2
-            val iR = f * 2 + 1
+        try {
+            while (current < totalFrames) {
+                val count = minOf(blockFrames, totalFrames - current)
+                val chunkEnd = current + count
 
-            val vL = if (vocalSamples != null && iL < vocalSamples.size) vocalSamples[iL] else 0.0f
-            val vR = if (vocalSamples != null && iR < vocalSamples.size) vocalSamples[iR] else 0.0f
+                for (f in 0 until count) {
+                    val frameIdx = current + f
+                    val iL = frameIdx * 2
+                    val iR = frameIdx * 2 + 1
 
-            val bL = if (beatSamples != null && iL < beatSamples.size) beatSamples[iL] else 0.0f
-            val bR = if (beatSamples != null && iR < beatSamples.size) beatSamples[iR] else 0.0f
+                    val vL = if (vocalSamples != null && iL < vocalSamples.size) vocalSamples[iL] else 0.0f
+                    val vR = if (vocalSamples != null && iR < vocalSamples.size) vocalSamples[iR] else 0.0f
 
-            val drL = if (drumSamples != null && iL < drumSamples.size) drumSamples[iL] else 0.0f
-            val drR = if (drumSamples != null && iR < drumSamples.size) drumSamples[iR] else 0.0f
+                    val bL = if (beatSamples != null && iL < beatSamples.size) beatSamples[iL] else 0.0f
+                    val bR = if (beatSamples != null && iR < beatSamples.size) beatSamples[iR] else 0.0f
 
-            val bassL = if (bassSamples != null && iL < bassSamples.size) bassSamples[iL] else 0.0f
-            val bassR = if (bassSamples != null && iR < bassSamples.size) bassSamples[iR] else 0.0f
+                    val drL = if (drumSamples != null && iL < drumSamples.size) drumSamples[iL] else 0.0f
+                    val drR = if (drumSamples != null && iR < drumSamples.size) drumSamples[iR] else 0.0f
 
-            val cL = if (chordSamples != null && iL < chordSamples.size) chordSamples[iL] else 0.0f
-            val cR = if (chordSamples != null && iR < chordSamples.size) chordSamples[iR] else 0.0f
+                    val bassL = if (bassSamples != null && iL < bassSamples.size) bassSamples[iL] else 0.0f
+                    val bassR = if (bassSamples != null && iR < bassSamples.size) bassSamples[iR] else 0.0f
 
-            val mL = if (melodySamples != null && iL < melodySamples.size) melodySamples[iL] else 0.0f
-            val mR = if (melodySamples != null && iR < melodySamples.size) melodySamples[iR] else 0.0f
+                    val cL = if (chordSamples != null && iL < chordSamples.size) chordSamples[iL] else 0.0f
+                    val cR = if (chordSamples != null && iR < chordSamples.size) chordSamples[iR] else 0.0f
 
-            val pL = if (padSamples != null && iL < padSamples.size) padSamples[iL] else 0.0f
-            val pR = if (padSamples != null && iR < padSamples.size) padSamples[iR] else 0.0f
+                    val mL = if (melodySamples != null && iL < melodySamples.size) melodySamples[iL] else 0.0f
+                    val mR = if (melodySamples != null && iR < melodySamples.size) melodySamples[iR] else 0.0f
 
-            val tL = if (transSamples != null && iL < transSamples.size) transSamples[iL] else 0.0f
-            val tR = if (transSamples != null && iR < transSamples.size) transSamples[iR] else 0.0f
+                    val pL = if (padSamples != null && iL < padSamples.size) padSamples[iL] else 0.0f
+                    val pR = if (padSamples != null && iR < padSamples.size) padSamples[iR] else 0.0f
 
-            // 1. Bus Summing:
-            // VOCAL BUS
-            val busVocalL = vL * vocalGain
-            val busVocalR = vR * vocalGain
+                    val tL = if (transSamples != null && iL < transSamples.size) transSamples[iL] else 0.0f
+                    val tR = if (transSamples != null && iR < transSamples.size) transSamples[iR] else 0.0f
 
-            // BEAT BUS
-            val busBeatL = bL * beatGain
-            val busBeatR = bR * beatGain
+                    // 1. Bus Summing:
+                    // VOCAL BUS
+                    val busVocalL = vL * vocalGain
+                    val busVocalR = vR * vocalGain
 
-            // DRUM BUS
-            val busDrumL = drL * drumGain
-            val busDrumR = drR * drumGain
+                    // BEAT BUS
+                    val busBeatL = bL * beatGain
+                    val busBeatR = bR * beatGain
 
-            // BASS BUS
-            val busBassL = bassL * bassGain
-            val busBassR = bassR * bassGain
+                    // DRUM BUS
+                    val busDrumL = drL * drumGain
+                    val busDrumR = drR * drumGain
 
-            // MUSIC BUS (Chord + Melody + Pad + FX)
-            val busMusicL = cL * chordGain + mL * melodyGain + pL * padGain + tL * fxGain
-            val busMusicR = cR * chordGain + mR * melodyGain + pR * padGain + tR * fxGain
+                    // BASS BUS
+                    val busBassL = bassL * bassGain
+                    val busBassR = bassR * bassGain
 
-            // MASTER BUS SUM
-            val mixedL = (busVocalL + busBeatL + busDrumL + busBassL + busMusicL) * masterGain
-            val mixedR = (busVocalR + busBeatR + busDrumR + busBassR + busMusicR) * masterGain
+                    // MUSIC BUS (Chord + Melody + Pad + FX)
+                    val busMusicL = cL * chordGain + mL * melodyGain + pL * padGain + tL * fxGain
+                    val busMusicR = cR * chordGain + mR * melodyGain + pR * padGain + tR * fxGain
 
-            mixedSamples[iL] = mixedL
-            mixedSamples[iR] = mixedR
+                    // MASTER BUS SUM
+                    val mixedL = (busVocalL + busBeatL + busDrumL + busBassL + busMusicL) * masterGain
+                    val mixedR = (busVocalR + busBeatR + busDrumR + busBassR + busMusicR) * masterGain
 
-            val absL = abs(mixedL)
-            val absR = abs(mixedR)
-            if (absL > maxPeakBeforeLimit) maxPeakBeforeLimit = absL
-            if (absR > maxPeakBeforeLimit) maxPeakBeforeLimit = absR
+                    val chunkIdxL = f * 2
+                    val chunkIdxR = f * 2 + 1
+                    chunkBuffer[chunkIdxL] = mixedL
+                    chunkBuffer[chunkIdxR] = mixedR
 
-            framesProcessed++
-            if (framesProcessed % chunkSize == 0) {
-                val progress = 0.20f + 0.55f * (framesProcessed.toFloat() / totalFrames.toFloat())
-                onProgress?.invoke(progress, "Proses mixing multi-bus PCM Float32...")
+                    val absL = abs(mixedL)
+                    val absR = abs(mixedR)
+                    if (absL > maxPeakBeforeLimit) maxPeakBeforeLimit = absL
+                    if (absR > maxPeakBeforeLimit) maxPeakBeforeLimit = absR
+                }
+
+                val destOffset = current * channels
+                System.arraycopy(chunkBuffer, 0, mixedSamples, destOffset, count * channels)
+
+                current += count
+
+                val progress = 0.20f + 0.55f * (current.toFloat() / totalFrames.toFloat())
+                if (current % (blockFrames * 4) == 0 || current >= totalFrames) {
+                    onProgress?.invoke(progress, "Proses mixing multi-bus chunk (${(progress * 100).toInt()}%)...")
+                }
             }
+        } finally {
+            AudioBufferPool.release(chunkBuffer)
         }
 
         onProgress?.invoke(0.80f, "Pemeriksaan headroom pre-master (-1.4 dBFS)...")

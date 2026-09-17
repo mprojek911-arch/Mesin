@@ -2,6 +2,7 @@ package com.autoremix.djslow.engine.synth
 
 import com.autoremix.djslow.engine.core.ArrangementEngine
 import com.autoremix.djslow.engine.music.Chord
+import com.autoremix.djslow.engine.pcm.AudioBufferPool
 import com.autoremix.djslow.engine.pcm.AudioPcmData
 import com.autoremix.djslow.engine.structure.SongSectionType
 import com.autoremix.djslow.engine.timeline.MasterTimeline
@@ -63,8 +64,93 @@ enum class ChordSynthPreset(
  */
 object ChordSynthEngine {
 
+    const val CHORD_CHUNK_FRAMES = 16384
+
     /**
-     * Merender keseluruhan progresi akor pada Master Timeline ke buffer PCM Float32 Stereo.
+     * Menyimpan state sintesis untuk satu event akor agar phase osilator
+     * dan envelope kontinu saat melintasi batas chunk (boundary continuity).
+     */
+    class ChordVoiceState(
+        val event: TimelineEvent.ChordEvent,
+        val totalFrames: Long,
+        val sampleRate: Int,
+        val preset: ChordSynthPreset,
+        val volume: Float
+    ) {
+        val frequencies = event.chord.getFrequenciesHz(preset.octave)
+        val adsr = AdsrEnvelope(preset.adsr, totalFrames, sampleRate)
+        val voiceWeight = if (frequencies.isNotEmpty()) {
+            (volume / (frequencies.size * 1.15f)).coerceIn(0.05f, 1.0f)
+        } else {
+            0.0f
+        }
+
+        // Sepasang osilator (primer + detuned stereo) untuk setiap nada
+        val oscillators: List<Pair<SynthOscillator, SynthOscillator>> = frequencies.map { freq ->
+            Pair(
+                SynthOscillator(preset.primaryWaveform, freq, sampleRate),
+                SynthOscillator(
+                    preset.secondaryWaveform,
+                    freq * (1.0f + (preset.secondaryDetuneCents / 1200.0f)),
+                    sampleRate
+                )
+            )
+        }
+    }
+
+    /**
+     * Merender satu blok audio chord langsung ke [outBuffer] pada [offset].
+     * Menggunakan [activeVoices] untuk menjaga kontinuitas phase osilator dan ADSR envelope.
+     */
+    fun renderChordBlock(
+        activeVoices: List<ChordVoiceState>,
+        startFrame: Long,
+        frameCount: Int,
+        outBuffer: FloatArray,
+        offset: Int = 0,
+        channels: Int = 2
+    ) {
+        val endFrame = startFrame + frameCount
+
+        for (voice in activeVoices) {
+            val eventStart = voice.event.startSample
+            val eventEnd = voice.event.endSample
+            if (eventEnd <= startFrame || eventStart >= endFrame) continue
+
+            val overlapStart = maxOf(startFrame, eventStart)
+            val overlapEnd = minOf(endFrame, eventEnd)
+            if (overlapEnd <= overlapStart) continue
+
+            val adsr = voice.adsr
+            val voiceWeight = voice.voiceWeight
+            val oscillators = voice.oscillators
+
+            for (f in overlapStart until overlapEnd) {
+                val relFrame = f - eventStart
+                val outIdx = offset + ((f - startFrame) * channels).toInt()
+                if (outIdx + 1 >= outBuffer.size) break
+
+                val envelopeGain = adsr.getGain(relFrame)
+                var mixedL = 0.0f
+                var mixedR = 0.0f
+
+                for ((osc1, osc2) in oscillators) {
+                    val s1 = osc1.nextSample()
+                    val s2 = osc2.nextSample()
+
+                    mixedL += (s1 * 0.65f + s2 * 0.35f) * voiceWeight * envelopeGain
+                    mixedR += (s1 * 0.35f + s2 * 0.65f) * voiceWeight * envelopeGain
+                }
+
+                outBuffer[outIdx] += mixedL
+                outBuffer[outIdx + 1] += mixedR
+            }
+        }
+    }
+
+    /**
+     * Merender keseluruhan progresi akor pada Master Timeline ke buffer PCM Float32 Stereo
+     * menggunakan pemrosesan chunk 16384 frames dan AudioBufferPool untuk mencegah OOM.
      */
     fun renderProgressionPcm(
         timeline: MasterTimeline,
@@ -82,41 +168,78 @@ object ChordSynthEngine {
             return AudioPcmData(samples, sampleRate, channels)
         }
 
-        onProgress?.invoke(0.1f, "Mempersiapkan synthesizer akor...")
+        onProgress?.invoke(0.05f, "Mempersiapkan synthesizer akor berbasis chunk...")
 
-        val totalEvents = timeline.chordEvents.size
-        timeline.chordEvents.forEachIndexed { eventIndex, event ->
-            val eventStartFrame = event.startSample.toInt()
-            val eventEndFrame = minOf(event.endSample.toInt(), totalFrames)
+        // Buat VoiceState untuk setiap chord event agar kontinuitas phase terjaga
+        val voiceStates = timeline.chordEvents.mapNotNull { event ->
+            val eventStartFrame = event.startSample
+            val eventEndFrame = minOf(event.endSample, totalFrames.toLong())
             val eventFrames = eventEndFrame - eventStartFrame
 
-            val sec = arrangement?.getSectionForBar(event.barIndex)
-            val secVolume = when (sec?.sectionType) {
-                SongSectionType.DROP, SongSectionType.MAIN_DROP, SongSectionType.PEAK, SongSectionType.FINAL_DROP -> volume * 1.0f
-                SongSectionType.BREAK, SongSectionType.BREAKDOWN -> volume * 0.65f // Soft chord (BAGIAN D)
-                SongSectionType.BUILD_UP, SongSectionType.BUILD_UP_2, SongSectionType.FINAL_BUILD -> volume * 0.80f
-                SongSectionType.PRE_DROP -> volume * 0.60f
-                SongSectionType.INTRO, SongSectionType.OUTRO -> volume * 0.60f
-                else -> volume
-            }
+            if (eventFrames <= 0 || eventStartFrame >= totalFrames) {
+                null
+            } else {
+                val sec = arrangement?.getSectionForBar(event.barIndex)
+                val secVolume = when (sec?.sectionType) {
+                    SongSectionType.DROP, SongSectionType.MAIN_DROP, SongSectionType.PEAK, SongSectionType.FINAL_DROP -> volume * 1.0f
+                    SongSectionType.BREAK, SongSectionType.BREAKDOWN -> volume * 0.65f // Soft chord (BAGIAN D)
+                    SongSectionType.BUILD_UP, SongSectionType.BUILD_UP_2, SongSectionType.FINAL_BUILD -> volume * 0.80f
+                    SongSectionType.PRE_DROP -> volume * 0.60f
+                    SongSectionType.INTRO, SongSectionType.OUTRO -> volume * 0.60f
+                    else -> volume
+                }
 
-            if (eventFrames > 0 && eventStartFrame < totalFrames) {
-                renderSingleChordIntoBuffer(
-                    chord = event.chord,
-                    startFrame = eventStartFrame,
-                    numFrames = eventFrames,
-                    targetSamples = samples,
-                    channels = channels,
+                ChordVoiceState(
+                    event = event,
+                    totalFrames = eventFrames,
                     sampleRate = sampleRate,
                     preset = preset,
                     volume = secVolume
                 )
             }
+        }
 
-            if (eventIndex % 4 == 0) {
-                val prog = 0.1f + 0.85f * (eventIndex.toFloat() / totalEvents)
-                onProgress?.invoke(prog, "Merender akor ${event.chord.name} (Bar ${event.barIndex + 1})...")
+        val blockFrames = CHORD_CHUNK_FRAMES
+        var current = 0L
+        val safeSamples = totalFrames.toLong()
+        val tempBlockSize = blockFrames * channels
+        val chunkBuffer = AudioBufferPool.acquire(tempBlockSize)
+
+        try {
+            while (current < safeSamples) {
+                val count = minOf(blockFrames.toLong(), safeSamples - current).toInt()
+                chunkBuffer.fill(0.0f, 0, count * channels)
+
+                // Saring voice yang overlap dengan chunk saat ini
+                val currentEnd = current + count
+                val activeVoices = voiceStates.filter { voice ->
+                    voice.event.endSample > current && voice.event.startSample < currentEnd
+                }
+
+                if (activeVoices.isNotEmpty()) {
+                    renderChordBlock(
+                        activeVoices = activeVoices,
+                        startFrame = current,
+                        frameCount = count,
+                        outBuffer = chunkBuffer,
+                        offset = 0,
+                        channels = channels
+                    )
+
+                    // Salin dari chunkBuffer ke master samples
+                    val destOffset = (current * channels).toInt()
+                    System.arraycopy(chunkBuffer, 0, samples, destOffset, count * channels)
+                }
+
+                current += count
+
+                val prog = 0.05f + 0.90f * (current.toFloat() / safeSamples.toFloat())
+                if (current % (blockFrames * 4L) == 0L || current >= safeSamples) {
+                    onProgress?.invoke(prog, "Merender chunk synthesizer akor (${(prog * 100).toInt()}%)...")
+                }
             }
+        } finally {
+            AudioBufferPool.release(chunkBuffer)
         }
 
         onProgress?.invoke(1.0f, "Sintesis audio akor selesai.")
@@ -208,3 +331,4 @@ object ChordSynthEngine {
         }
     }
 }
+
