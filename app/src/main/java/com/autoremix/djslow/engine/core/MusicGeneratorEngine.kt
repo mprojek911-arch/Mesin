@@ -122,14 +122,10 @@ object MusicGeneratorEngine {
                 beatAnalysis = beatAnalysis,
                 preset = remixPlan.style.legacyPreset
             )
-            val rawDrum = DrumEngine.renderDrums(
+            val drumPcm = DrumEngine.renderDrums(
                 events = scheduledDrumEvents,
                 totalSamples = timeline.totalFrames,
                 sampleRate = sampleRate
-            )
-            val drumVolume = remixPlan.mixPlan.drumVolume
-            val drumPcm = if (drumVolume == 1f) rawDrum else rawDrum.copy(
-                samples = FloatArray(rawDrum.samples.size) { rawDrum.samples[it] * drumVolume }
             )
 
             // 3. Generate BASS (Sub-bass, glide, ducking)
@@ -185,14 +181,10 @@ object MusicGeneratorEngine {
                 seed = remixPlan.melodyPlan.seed,
                 preset = remixPlan.style.legacyPreset
             )
-            val rawMelody = MelodyEngine.renderMelody(
+            val melodyPcm = MelodyEngine.renderMelody(
                 events = melodyEvents,
                 totalSamples = timeline.totalFrames,
                 sampleRate = sampleRate
-            )
-            val melodyVolume = remixPlan.melodyPlan.volume
-            val melodyPcm = if (melodyVolume == 1f) rawMelody else rawMelody.copy(
-                samples = FloatArray(rawMelody.samples.size) { rawMelody.samples[it] * melodyVolume }
             )
 
             // 6. Generate PAD ATMOSFIR
@@ -208,14 +200,10 @@ object MusicGeneratorEngine {
                 preset = remixPlan.style.legacyPreset,
                 hasVocal = false
             )
-            val rawPad = PadEngine.renderPad(
+            val padPcm = PadEngine.renderPad(
                 events = padEvents,
                 totalSamples = timeline.totalFrames,
                 sampleRate = sampleRate
-            )
-            val padVolume = remixPlan.padPlan.volume
-            val padPcm = if (padVolume == 1f) rawPad else rawPad.copy(
-                samples = FloatArray(rawPad.samples.size) { rawPad.samples[it] * padVolume }
             )
 
             // 7. Generate FX TRANSISI (Risers, Impacts, Sweeps)
@@ -226,14 +214,10 @@ object MusicGeneratorEngine {
                 sampleRate = sampleRate,
                 samplesPerBar = samplesPerBar
             )
-            val rawFx = SectionEngines.renderTransitions(
+            val fxPcm = SectionEngines.renderTransitions(
                 events = fxEvents,
                 totalSamples = timeline.totalFrames,
                 sampleRate = sampleRate
-            )
-            val fxVolume = remixPlan.fxPlan.volume
-            val fxPcm = if (fxVolume == 1f) rawFx else rawFx.copy(
-                samples = FloatArray(rawFx.samples.size) { rawFx.samples[it] * fxVolume }
             )
 
             onProgress?.invoke(1.0f, "Sintesis seluruh instrumen musik selesai.")

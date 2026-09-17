@@ -102,10 +102,17 @@ fun LogChatScreen(
     var detailEntry by remember { mutableStateOf<LogEntry?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
 
-    // Evaluasi Status Sistem Keseluruhan Berdasarkan Log Nyata
-    val hasCritical = logs.any { it.level == LogLevel.CRITICAL }
-    val hasError = logs.any { it.level == LogLevel.ERROR }
-    val hasWarning = logs.any { it.level == LogLevel.WARNING }
+    // Evaluasi Status Sistem Keseluruhan Berdasarkan Status Pipeline & Log Nyata
+    val activePipelineHasError = pipelineMap.values.any { it.status == StepStatus.FAILED }
+    val realCriticalErrors = logs.filter { 
+        it.level == LogLevel.CRITICAL && !it.message.contains("CRASH SEBELUMNYA")
+    }
+    val realActiveErrors = logs.filter { 
+        it.level == LogLevel.ERROR && !it.message.contains("[UJI TERKONTROL]")
+    }
+    val hasCritical = realCriticalErrors.isNotEmpty()
+    val hasError = activePipelineHasError || realActiveErrors.isNotEmpty()
+    val hasWarning = pipelineMap.values.any { it.status == StepStatus.WARNING } || logs.any { it.level == LogLevel.WARNING }
 
     val statusColor = when {
         hasCritical || hasError -> Color(0xFFFF4081)
@@ -115,9 +122,9 @@ fun LogChatScreen(
 
     val statusText = when {
         hasCritical -> "🔴 Ada kesalahan kritis dalam aplikasi"
-        hasError -> "🔴 Ada kesalahan yang tercatat"
+        hasError -> "🔴 Ada kesalahan pada proses audio"
         hasWarning -> "🟡 Ada peringatan pada sistem atau audio"
-        else -> "🟢 Aplikasi berjalan normal"
+        else -> "🟢 Aplikasi berjalan normal (Anti-OOM Aktif)"
     }
 
     // Filter log

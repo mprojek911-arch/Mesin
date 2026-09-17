@@ -290,33 +290,32 @@ object LogChatManager {
      */
     fun triggerControlledTestError(context: Context) {
         info(LogModule.AUDIO, "Memulai Uji Diagnostik Error Terkontrol...")
-        updatePipeline(PipelineStage.DECODE, StepStatus.WARNING, "Memulai uji pembacaan audio korup terkontrol")
-        
+
         try {
             val dummyInvalidUri = Uri.parse("file:///invalid/path/corrupt_audio_test.xyz")
             val decodeResult = com.autoremix.djslow.engine.AudioDecoder.decode(context, dummyInvalidUri)
             if (decodeResult.isFailure) {
                 val exception = decodeResult.exceptionOrNull() ?: IllegalArgumentException("Unsupported audio format: xyz")
-                error(
+                log(
+                    level = LogLevel.ERROR,
                     module = LogModule.AUDIO,
-                    message = "Gagal membaca file audio: format berkas tidak didukung.",
-                    throwable = exception,
-                    detail = "Unsupported audio format or file not found (uji terkontrol berhasil menangkap error)",
-                    stage = "DECODE",
-                    file = "corrupt_audio_test.xyz"
+                    message = "[UJI TERKONTROL] Simulasi error pembacaan audio berhasil diverifikasi.",
+                    detail = "Unsupported audio format or file not found (uji diagnostik terkontrol menangkap error secara aman).",
+                    stackTrace = exception.stackTraceToString(),
+                    pipelineStage = "DIAGNOSTIK",
+                    associatedFile = "corrupt_audio_test.xyz"
                 )
-                updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Unsupported audio format (uji terkontrol)")
             }
         } catch (ex: Exception) {
-            error(
+            log(
+                level = LogLevel.ERROR,
                 module = LogModule.AUDIO,
-                message = "Gagal membaca file audio (Uji terkontrol)",
-                throwable = ex,
+                message = "[UJI TERKONTROL] Simulasi error pembacaan audio berhasil diverifikasi.",
                 detail = ex.message ?: "Format audio tidak valid",
-                stage = "DECODE",
-                file = "corrupt_audio_test.xyz"
+                stackTrace = ex.stackTraceToString(),
+                pipelineStage = "DIAGNOSTIK",
+                associatedFile = "corrupt_audio_test.xyz"
             )
-            updatePipeline(PipelineStage.DECODE, StepStatus.FAILED, "Unsupported audio format: ${ex.message}")
         }
     }
 

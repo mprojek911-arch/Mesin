@@ -15,7 +15,7 @@ class RenderedPlaybackTest {
     @Test
     fun testRenderedPlaybackStatusValues() {
         assertEquals("⚪ BELUM TERSEDIA", RenderedPlaybackStatus.BELUM_TERSEDIA.label)
-        assertEquals("⚪ SIAP", RenderedPlaybackStatus.SIAP.label)
+        assertEquals("🔵 SIAP", RenderedPlaybackStatus.SIAP.label)
         assertEquals("🟢 SEDANG MEMUTAR", RenderedPlaybackStatus.SEDANG_MEMUTAR.label)
         assertEquals("🟡 DIJEDA", RenderedPlaybackStatus.DIJEDA.label)
         assertEquals("⏹ BERHENTI", RenderedPlaybackStatus.BERHENTI.label)

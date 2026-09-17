@@ -29,12 +29,29 @@ object AudioPcmDecoder {
         uri: Uri,
         onProgress: ((Float, String) -> Unit)? = null
     ): Result<AudioPcmData> {
+        return decodeRangeToPcm(context, uri, startMs = 0L, durationMs = Long.MAX_VALUE, onProgress = onProgress)
+    }
+
+    /**
+     * Mendekode hanya rentang waktu tertentu [startMs] selama [durationMs] (misal: 30 detik untuk pratinjau).
+     * Mencegah pemborosan memori dan OOM karena file panjang (150s - 300s) tidak didekode seluruhnya.
+     */
+    fun decodeRangeToPcm(
+        context: Context,
+        uri: Uri,
+        startMs: Long = 0L,
+        durationMs: Long = 30_000L,
+        onProgress: ((Float, String) -> Unit)? = null
+    ): Result<AudioPcmData> {
+        AudioMemoryManager.logMemoryUsage("AudioPcmDecoder.decodeRangeToPcm(start=${startMs}ms, dur=${durationMs}ms)")
         onProgress?.invoke(0.05f, "Membuka berkas audio...")
 
-        // Coba decode via direct WAV parsing terlebih dahulu jika file bertipe WAV
-        val directWavResult = tryDecodeDirectWav(context, uri, onProgress)
-        if (directWavResult != null && directWavResult.isSuccess) {
-            return directWavResult
+        // Coba decode via direct WAV parsing terlebih dahulu jika file bertipe WAV dan durasi penuh
+        if (startMs == 0L && durationMs == Long.MAX_VALUE) {
+            val directWavResult = tryDecodeDirectWav(context, uri, onProgress)
+            if (directWavResult != null && directWavResult.isSuccess) {
+                return directWavResult
+            }
         }
 
         // Decode menggunakan Android MediaExtractor + MediaCodec
@@ -68,9 +85,17 @@ object AudioPcmDecoder {
                 trackFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
             } else 2
 
-            val durationUs = if (trackFormat.containsKey(MediaFormat.KEY_DURATION)) {
+            val totalDurationUs = if (trackFormat.containsKey(MediaFormat.KEY_DURATION)) {
                 trackFormat.getLong(MediaFormat.KEY_DURATION)
             } else 0L
+
+            val startUs = startMs * 1000L
+            val maxDurationUs = if (durationMs == Long.MAX_VALUE) Long.MAX_VALUE else durationMs * 1000L
+
+            // Seek jika rentang dimulai setelah 0
+            if (startUs > 0L) {
+                extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            }
 
             onProgress?.invoke(0.15f, "Inisialisasi decoder $mime...")
 
@@ -78,7 +103,7 @@ object AudioPcmDecoder {
             codec.configure(trackFormat, null, null, 0)
             codec.start()
 
-            val decodedChunks = decodeChunks(extractor, codec, durationUs, onProgress)
+            val decodedChunks = decodeChunks(extractor, codec, startUs, maxDurationUs, totalDurationUs, onProgress)
 
             if (decodedChunks.totalBytes == 0) {
                 return Result.failure(IllegalStateException("Gagal mengekstrak sampel audio (data kosong)."))
@@ -97,13 +122,21 @@ object AudioPcmDecoder {
 
             onProgress?.invoke(0.80f, "Mengonversi ke PCM Float32 stereo 44.1 kHz...")
 
-            val pcmData = convertChunksToFloat32Stereo(
+            var pcmData = convertChunksToFloat32Stereo(
                 chunks = decodedChunks.chunks,
                 totalBytes = decodedChunks.totalBytes,
                 sourceSampleRate = sourceSampleRate,
                 sourceChannels = sourceChannels,
                 targetSampleRate = TARGET_SAMPLE_RATE
             )
+
+            // Pangkas tepat ke durasi maksimal jika diminta
+            if (durationMs != Long.MAX_VALUE) {
+                val maxFrames = (durationMs * TARGET_SAMPLE_RATE / 1000L).toInt()
+                if (pcmData.totalFrames > maxFrames) {
+                    pcmData = pcmData.slice(0, maxFrames)
+                }
+            }
 
             onProgress?.invoke(1.0f, "Perekaman PCM selesai (${pcmData.durationMs / 1000}s).")
             return Result.success(pcmData)
@@ -138,7 +171,9 @@ object AudioPcmDecoder {
     private fun decodeChunks(
         extractor: MediaExtractor,
         codec: MediaCodec,
-        durationUs: Long,
+        startUs: Long,
+        maxDurationUs: Long,
+        totalDurationUs: Long,
         onProgress: ((Float, String) -> Unit)?
     ): DecodedChunks {
         val kTimeoutUs = 5000L
@@ -148,6 +183,7 @@ object AudioPcmDecoder {
 
         val outputChunkList = ArrayList<ByteArray>(64)
         var totalBytesDecoded = 0
+        val maxSafeBytes = 44100 * 2 * 2 * 320 // Max safety cap ~112MB
 
         while (!isDecoderEos) {
             if (!isExtractorEos) {
@@ -157,16 +193,21 @@ object AudioPcmDecoder {
                     if (inBuffer != null) {
                         inBuffer.clear()
                         val sampleSize = extractor.readSampleData(inBuffer, 0)
-                        if (sampleSize < 0) {
+                        val sampleTimeUs = extractor.sampleTime
+
+                        val reachedMax = maxDurationUs != Long.MAX_VALUE && sampleTimeUs >= startUs + maxDurationUs
+
+                        if (sampleSize < 0 || reachedMax) {
                             codec.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             isExtractorEos = true
                         } else {
-                            val sampleTimeUs = extractor.sampleTime
                             codec.queueInputBuffer(inIndex, 0, sampleSize, sampleTimeUs, 0)
                             extractor.advance()
 
-                            if (durationUs > 0) {
-                                val progress = 0.15f + 0.60f * (sampleTimeUs.toFloat() / durationUs.toFloat()).coerceIn(0f, 1f)
+                            val effectiveTotal = if (maxDurationUs != Long.MAX_VALUE) maxDurationUs else totalDurationUs
+                            if (effectiveTotal > 0) {
+                                val currentOffset = (sampleTimeUs - startUs).coerceAtLeast(0L)
+                                val progress = 0.15f + 0.60f * (currentOffset.toFloat() / effectiveTotal.toFloat()).coerceIn(0f, 1f)
                                 onProgress?.invoke(progress, "Mendekode audio PCM...")
                             }
                         }
@@ -189,6 +230,10 @@ object AudioPcmDecoder {
                         outBuffer.get(chunk)
                         outputChunkList.add(chunk)
                         totalBytesDecoded += info.size
+
+                        if (totalBytesDecoded > maxSafeBytes) {
+                            isDecoderEos = true
+                        }
                     }
                 }
                 codec.releaseOutputBuffer(outIndex, false)
@@ -204,7 +249,14 @@ object AudioPcmDecoder {
         durationUs: Long,
         onProgress: ((Float, String) -> Unit)?
     ): ByteArray {
-        val decoded = decodeChunks(extractor, codec, durationUs, onProgress)
+        val decoded = decodeChunks(
+            extractor = extractor,
+            codec = codec,
+            startUs = 0L,
+            maxDurationUs = durationUs,
+            totalDurationUs = durationUs,
+            onProgress = onProgress
+        )
         val allBytes = ByteArray(decoded.totalBytes)
         var offset = 0
         for (chunk in decoded.chunks) {

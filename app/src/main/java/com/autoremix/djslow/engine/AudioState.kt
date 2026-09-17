@@ -32,7 +32,7 @@ enum class PlaybackEngineState(val label: String) {
  */
 enum class RenderedPlaybackStatus(val label: String, val icon: String) {
     BELUM_TERSEDIA("⚪ BELUM TERSEDIA", "⚪"),
-    SIAP("⚪ SIAP", "⚪"),
+    SIAP("🔵 SIAP", "🔵"),
     SEDANG_MEMUTAR("🟢 SEDANG MEMUTAR", "🟢"),
     DIJEDA("🟡 DIJEDA", "🟡"),
     BERHENTI("⏹ BERHENTI", "⏹"),

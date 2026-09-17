@@ -141,6 +141,78 @@ object SectionEngines {
     }
 
     /**
+     * Merender potongan transisi FX secara chunk-by-chunk untuk penghematan memori.
+     */
+    fun renderTransitionChunk(
+        events: List<TransitionFxEvent>,
+        chunkStartFrame: Long,
+        frameCount: Int,
+        sampleRate: Int
+    ): AudioPcmData {
+        val channels = 2
+        val buffer = FloatArray(frameCount * channels)
+        val chunkEndFrame = chunkStartFrame + frameCount
+        val random = Random(999 + (chunkStartFrame % 10000).toInt())
+
+        for (event in events) {
+            val eventStart = event.sampleOffset
+            val eventEnd = event.sampleOffset + event.durationSamples
+
+            if (eventEnd <= chunkStartFrame || eventStart >= chunkEndFrame) continue
+
+            val dur = event.durationSamples
+            if (dur <= 0) continue
+
+            val startInChunk = maxOf(0L, eventStart - chunkStartFrame).toInt()
+            val endInChunk = minOf(frameCount.toLong(), eventEnd - chunkStartFrame).toInt()
+
+            for (f in startInChunk until endInChunk) {
+                val absFrame = chunkStartFrame + f
+                val sampleInEvent = (absFrame - eventStart).toInt()
+                if (sampleInEvent < 0 || sampleInEvent >= dur) continue
+
+                val outIdx = f * channels
+                val t = sampleInEvent.toDouble() / dur
+
+                when (event.type) {
+                    TransitionFxType.NOISE_RISER -> {
+                        val amp = (t * t * event.velocity * 0.35f).toFloat()
+                        val isGap = (dur - sampleInEvent) < (sampleRate * 0.10)
+                        if (!isGap) {
+                            val noiseL = (random.nextFloat() * 2f - 1f) * amp
+                            val noiseR = (random.nextFloat() * 2f - 1f) * amp
+                            buffer[outIdx] += noiseL
+                            buffer[outIdx + 1] += noiseR
+                        }
+                    }
+                    TransitionFxType.DOWNBEAT_IMPACT -> {
+                        val tSec = sampleInEvent.toDouble() / sampleRate
+                        val env = exp(-tSec * 3.5)
+                        val sub = sin(2.0 * PI * 55.0 * tSec) * env * 0.5
+                        val splash = (random.nextFloat() * 2f - 1f) * env * 0.35
+                        val v = ((sub + splash) * event.velocity * 0.45f).toFloat()
+                        buffer[outIdx] += v
+                        buffer[outIdx + 1] += v
+                    }
+                    TransitionFxType.REVERSE_SWEEP -> {
+                        val env = sin(t * PI).toFloat()
+                        val noise = (random.nextFloat() * 2f - 1f) * env * event.velocity * 0.25f
+                        buffer[outIdx] += noise
+                        buffer[outIdx + 1] += noise
+                    }
+                    else -> {}
+                }
+            }
+        }
+
+        return AudioPcmData(
+            samples = buffer,
+            sampleRate = sampleRate,
+            channels = channels
+        )
+    }
+
+    /**
      * Merender seluruh efek transisi menjadi buffer PCM Stereo.
      */
     fun renderTransitions(
@@ -149,7 +221,7 @@ object SectionEngines {
         sampleRate: Int
     ): AudioPcmData {
         val channels = 2
-        val safeSamples = max(44100L, totalSamples)
+        val safeSamples = minOf(totalSamples, 44100L * 30L).coerceAtLeast(44100L)
         val totalFloats = (safeSamples * channels).toInt().coerceAtLeast(channels)
         val buffer = FloatArray(totalFloats)
         val random = Random(999)

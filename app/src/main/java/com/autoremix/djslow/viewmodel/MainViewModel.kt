@@ -909,10 +909,10 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val vocalPcm = vocal?.uri?.let {
-                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeToPcm(context, it).getOrNull()
+                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeRangeToPcm(context, it, startMs = 0L, durationMs = 30_000L).getOrNull()
                 }
                 val beatPcm = beat?.uri?.let {
-                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeToPcm(context, it).getOrNull()
+                    com.autoremix.djslow.engine.pcm.AudioPcmDecoder.decodeRangeToPcm(context, it, startMs = 0L, durationMs = 30_000L).getOrNull()
                 }
 
                 val result = com.autoremix.djslow.engine.core.RemixWorkflowEngine.executeAutoRemix(

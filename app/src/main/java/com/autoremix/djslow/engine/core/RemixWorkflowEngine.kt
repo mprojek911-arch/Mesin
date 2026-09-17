@@ -123,14 +123,36 @@ object RemixWorkflowEngine {
             val arrangement = ArrangementEngine.createArrangement(musicalMap, remixPlan)
             LogChatManager.updatePipeline(PipelineStage.ARRANGEMENT, StepStatus.SUCCESS, "${arrangement.sections.size} Bagian DJ")
 
+            // Durasi efektif: jika hanya membuat preview 30s, batasi timeline tepat 30 detik untuk menghemat 90% memori RAM
+            val effectiveDurationMs = if (generate30sPreviewOnly) {
+                minOf(30_000L, musicalMap.totalDurationMs)
+            } else {
+                musicalMap.totalDurationMs
+            }
+
+            val maxFrames = (effectiveDurationMs * 44100L / 1000L).toInt()
+            val effectiveVocalPcm = if (generate30sPreviewOnly && vocalPcm != null && vocalPcm.totalFrames > maxFrames) {
+                vocalPcm.slice(0, maxFrames)
+            } else {
+                vocalPcm
+            }
+            val effectiveBeatPcm = if (generate30sPreviewOnly && beatPcm != null && beatPcm.totalFrames > maxFrames) {
+                beatPcm.slice(0, maxFrames)
+            } else {
+                beatPcm
+            }
+
             // Sinkronkan Master Timeline dengan BPM target dari Remix Brain
             val masterTimeline = MasterTimeline.build(
                 bpm = remixPlan.targetBpm,
-                totalDurationMs = musicalMap.totalDurationMs
+                totalDurationMs = effectiveDurationMs
             ).copy(
                 chordEvents = analysis.timeline.chordEvents,
                 sections = arrangement.sections.map { it.toSongSection() }
             )
+
+            com.autoremix.djslow.engine.pcm.AudioMemoryManager.logMemoryUsage("Workflow.PreGeneration(frames=${masterTimeline.totalFrames})")
+            com.autoremix.djslow.engine.pcm.AudioMemoryManager.trimMemoryIfNeeded("Workflow.PreGeneration")
 
             // ==============================================================
             // 6. MUSIC GENERATOR ENGINE
@@ -168,7 +190,7 @@ object RemixWorkflowEngine {
                 voiceTagSample = voiceTagPcm
             )
             val processedVocal = VocalFxEngine.processVocal(
-                rawVocalPcm = vocalPcm,
+                rawVocalPcm = effectiveVocalPcm,
                 timeline = masterTimeline,
                 remixPlan = remixPlan,
                 arrangement = arrangement,
@@ -194,7 +216,7 @@ object RemixWorkflowEngine {
             )
             val mixRes = IntelligentMixEngine.performIntelligentMix(
                 vocalPcm = processedVocal,
-                beatPcm = beatPcm,
+                beatPcm = effectiveBeatPcm,
                 drumPcm = generatedMusic.drumPcm,
                 bassPcm = generatedMusic.bassPcm,
                 chordPcm = generatedMusic.chordPcm,
@@ -242,7 +264,7 @@ object RemixWorkflowEngine {
             // ==============================================================
             onStatusChanged?.invoke(OutputEngine.OutputStatus.RENDERING, 0.90f, "RENDERING...")
 
-            val pcmToRender = if (generate30sPreviewOnly) {
+            val pcmToRender = if (generate30sPreviewOnly && masteredPcm.durationMs > 31_000L) {
                 OutputEngine.extract30SecondPreviewPcm(masteredPcm, arrangement)
             } else {
                 masteredPcm

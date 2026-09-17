@@ -126,7 +126,7 @@ object RemixGuideManager {
                     isCompleted = true,
                     isInProgress = false,
                     badgeText = "✅ BPM: $bpm",
-                    detailText = "Tempo target saat ini $bpm BPM. Nada terdeteksi ${uiState.detectedKey.tonic.displayName} ${uiState.detectedKey.mode.label}."
+                    detailText = "Tempo target saat ini $bpm BPM. Nada terdeteksi ${uiState.detectedKey.displayName}."
                 )
             }
             GuideStep.STEP_05_PILIH_GAYA_REMIX -> {
