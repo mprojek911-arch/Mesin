@@ -81,6 +81,36 @@ object StereoEngine {
     }
 
     /**
+     * Versi zero-allocation untuk streaming per blok dengan reusable buffer dan stateful filter.
+     */
+    fun monoBass(
+        samples: FloatArray,
+        lpFilter: BiquadFilter,
+        tempLowBuffer: FloatArray
+    ) {
+        val totalFrames = samples.size / 2
+        if (totalFrames <= 0) return
+
+        System.arraycopy(samples, 0, tempLowBuffer, 0, samples.size)
+        lpFilter.processInterleaved(tempLowBuffer, channels = 2)
+
+        for (f in 0 until totalFrames) {
+            val idxL = f * 2
+            val idxR = idxL + 1
+
+            val lowL = tempLowBuffer[idxL]
+            val lowR = tempLowBuffer[idxR]
+
+            val monoLow = 0.5f * (lowL + lowR)
+            val highL = samples[idxL] - lowL
+            val highR = samples[idxR] - lowR
+
+            samples[idxL] = highL + monoLow
+            samples[idxR] = highR + monoLow
+        }
+    }
+
+    /**
      * Menghasilkan ruang stereo alami (ambience micro-delay stereo) untuk Pad dan Vokal.
      * Menggunakan delay waktu yang sangat kecil (15-30ms) dengan level basah yang halus (10-15%).
      */

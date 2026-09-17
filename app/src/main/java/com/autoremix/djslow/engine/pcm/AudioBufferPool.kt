@@ -7,7 +7,8 @@ package com.autoremix.djslow.engine.pcm
  */
 object AudioBufferPool {
 
-    private const val MAX_POOL_BUFFERS = 16
+    private const val MAX_POOL_BUFFERS = 6
+    private const val MAX_BUFFER_SIZE_TO_POOL = 65536 // Max 64K floats (256 KB) per buffer
     private val pool = ArrayDeque<FloatArray>()
     private val lock = Any()
 
@@ -32,12 +33,24 @@ object AudioBufferPool {
 
     /**
      * Mengembalikan buffer FloatArray ke pool untuk digunakan kembali oleh proses berikutnya.
+     * Buffer berukuran lebih besar dari MAX_BUFFER_SIZE_TO_POOL tidak disimpan agar tidak membebani heap RAM.
      */
     fun release(buffer: FloatArray?) {
-        if (buffer == null) return
+        if (buffer == null || buffer.size > MAX_BUFFER_SIZE_TO_POOL) return
         synchronized(lock) {
             if (pool.size < MAX_POOL_BUFFERS) {
                 pool.add(buffer)
+            }
+        }
+    }
+
+    /**
+     * Memangkas jumlah buffer dalam pool hingga maksimal [maxBuffers].
+     */
+    fun trimToSize(maxBuffers: Int = 0) {
+        synchronized(lock) {
+            while (pool.size > maxBuffers) {
+                pool.removeFirst()
             }
         }
     }

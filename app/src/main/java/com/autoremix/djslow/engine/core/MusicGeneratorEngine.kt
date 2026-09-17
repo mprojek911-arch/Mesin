@@ -244,15 +244,21 @@ object MusicGeneratorEngine {
         timeline: MasterTimeline,
         events: ScheduledMusicEvents,
         arrangement: ArrangementEngine.FullArrangement,
-        outStereo: FloatArray
+        outStereo: FloatArray,
+        tempBuffer: FloatArray? = null
     ) {
         val channels = 2
         val totalSamples = frameCount * channels
         java.util.Arrays.fill(outStereo, 0, totalSamples, 0f)
 
-        val tempBuf = FloatArray(totalSamples)
+        val tempBuf = if (tempBuffer != null && tempBuffer.size >= totalSamples) {
+            tempBuffer
+        } else {
+            FloatArray(totalSamples)
+        }
 
         // 1. Drum Block
+        tempBuf.fill(0f)
         DrumEngine.renderDrumBlock(
             events = events.drumEvents,
             startFrame = startFrame,
@@ -281,24 +287,18 @@ object MusicGeneratorEngine {
             outStereo[i] += tempBuf[i]
         }
 
-        // 3. Chord Block
+        // 3. Chord Block (renderChordBlock internal checks filter bounds, zero allocation)
         tempBuf.fill(0f)
-        val endFrame = startFrame + frameCount
-        val activeVoices = events.chordVoices.filter { voice ->
-            voice.event.endSample > startFrame && voice.event.startSample < endFrame
-        }
-        if (activeVoices.isNotEmpty()) {
-            ChordSynthEngine.renderChordBlock(
-                activeVoices = activeVoices,
-                startFrame = startFrame,
-                frameCount = frameCount,
-                outBuffer = tempBuf,
-                offset = 0,
-                channels = channels
-            )
-            for (i in 0 until totalSamples) {
-                outStereo[i] += tempBuf[i]
-            }
+        ChordSynthEngine.renderChordBlock(
+            activeVoices = events.chordVoices,
+            startFrame = startFrame,
+            frameCount = frameCount,
+            outBuffer = tempBuf,
+            offset = 0,
+            channels = channels
+        )
+        for (i in 0 until totalSamples) {
+            outStereo[i] += tempBuf[i]
         }
 
         // 4. Melody Block

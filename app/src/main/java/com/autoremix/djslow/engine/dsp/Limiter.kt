@@ -27,6 +27,11 @@ class Limiter(
     private val lookaheadFrames = ((lookaheadMs * 0.001f) * sampleRate).toInt().coerceAtLeast(4)
     private val releaseAlpha = exp(-1.0 / (releaseMs * 0.001 * sampleRate)).toFloat()
 
+    private val delayBufferL = FloatArray(lookaheadFrames)
+    private val delayBufferR = FloatArray(lookaheadFrames)
+    private var bufferIdx = 0
+    private var currentGain = 1.0f
+
     /**
      * Memproses buffer interleaved stereo [samples].
      * Mengembalikan true jika limiter berhasil dan bebas clipping.
@@ -34,12 +39,6 @@ class Limiter(
     fun processInterleaved(samples: FloatArray, channels: Int = 2) {
         val totalFrames = samples.size / channels
         if (totalFrames <= 0) return
-
-        val delayBufferL = FloatArray(lookaheadFrames)
-        val delayBufferR = FloatArray(lookaheadFrames)
-        var bufferIdx = 0
-
-        var currentGain = 1.0f
 
         // Ambang batas mulai reduksi halus (soft knee 2 dB di bawah ceiling)
         val softThreshold = ceilingLinear * 0.80f

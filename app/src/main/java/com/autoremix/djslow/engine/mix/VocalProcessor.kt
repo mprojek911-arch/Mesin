@@ -56,6 +56,17 @@ class VocalBlockProcessor(val sampleRate: Int = 44100, val channels: Int = 2) {
     )
     private var deEssGain = 1.0f
 
+    // Reusable detection buffer for de-esser (16384 frames max per block)
+    private val persistentTempDetection = FloatArray(16384 * channels)
+
+    // Reusable continuous stereo ambience delay lines (Zero per-block allocation)
+    private val ambienceDelaySamples = ((28.0f * 0.001f) * sampleRate).toInt().coerceAtLeast(1)
+    private val ambienceDelayL = FloatArray(ambienceDelaySamples)
+    private val ambienceDelayR = FloatArray(ambienceDelaySamples)
+    private var ambienceWriteIdx = 0
+    private val ambienceClampedWet = 0.12f
+    private val ambienceClampedFb = 0.10f
+
     fun processBlock(blockSamples: FloatArray) {
         if (blockSamples.isEmpty()) return
 
@@ -65,8 +76,12 @@ class VocalBlockProcessor(val sampleRate: Int = 44100, val channels: Int = 2) {
         airFilter.processInterleaved(blockSamples, channels)
         vocalComp.processInterleaved(blockSamples, channels)
 
-        // De-esser menggunakan buffer deteksi sementara dari pool (hanya seukuran blok)
-        val tempDetection = AudioBufferPool.acquire(blockSamples.size)
+        // De-esser menggunakan buffer deteksi persisten (zero transient allocation)
+        val tempDetection = if (blockSamples.size <= persistentTempDetection.size) {
+            persistentTempDetection
+        } else {
+            AudioBufferPool.acquire(blockSamples.size)
+        }
         try {
             System.arraycopy(blockSamples, 0, tempDetection, 0, blockSamples.size)
             sibilanceFilter.processInterleaved(tempDetection, channels)
@@ -99,17 +114,32 @@ class VocalBlockProcessor(val sampleRate: Int = 44100, val channels: Int = 2) {
                 }
             }
         } finally {
-            AudioBufferPool.release(tempDetection)
+            if (tempDetection !== persistentTempDetection) {
+                AudioBufferPool.release(tempDetection)
+            }
         }
 
         if (channels == 2) {
-            StereoEngine.applyStereoAmbience(
-                samples = blockSamples,
-                sampleRate = sampleRate,
-                delayMs = 28.0f,
-                feedback = 0.10f,
-                wetLevel = 0.12f
-            )
+            val totalFrames = blockSamples.size / 2
+            val dSamples = ambienceDelaySamples
+            for (f in 0 until totalFrames) {
+                val idxL = f * 2
+                val idxR = idxL + 1
+
+                val inL = blockSamples[idxL]
+                val inR = blockSamples[idxR]
+
+                val delayedL = ambienceDelayL[ambienceWriteIdx]
+                val delayedR = ambienceDelayR[(ambienceWriteIdx + dSamples / 2) % dSamples]
+
+                ambienceDelayL[ambienceWriteIdx] = inL + delayedL * ambienceClampedFb
+                ambienceDelayR[ambienceWriteIdx] = inR + delayedR * ambienceClampedFb
+
+                ambienceWriteIdx = (ambienceWriteIdx + 1) % dSamples
+
+                blockSamples[idxL] = inL * (1.0f - ambienceClampedWet * 0.5f) + delayedR * ambienceClampedWet
+                blockSamples[idxR] = inR * (1.0f - ambienceClampedWet * 0.5f) + delayedL * ambienceClampedWet
+            }
         }
     }
 }
@@ -135,7 +165,27 @@ object VocalProcessor {
         }
 
         val processor = VocalBlockProcessor(sampleRate, channels)
-        processor.processBlock(samples)
+        val blockSize = 16384
+        val totalFrames = samples.size / channels
+        val blockBuffer = FloatArray(blockSize * channels)
+
+        var f = 0
+        while (f < totalFrames) {
+            val framesThis = minOf(blockSize, totalFrames - f)
+            val sampleCount = framesThis * channels
+            val offset = f * channels
+            if (framesThis == blockSize) {
+                System.arraycopy(samples, offset, blockBuffer, 0, sampleCount)
+                processor.processBlock(blockBuffer)
+                System.arraycopy(blockBuffer, 0, samples, offset, sampleCount)
+            } else {
+                val partialBuffer = FloatArray(sampleCount)
+                System.arraycopy(samples, offset, partialBuffer, 0, sampleCount)
+                processor.processBlock(partialBuffer)
+                System.arraycopy(partialBuffer, 0, samples, offset, sampleCount)
+            }
+            f += framesThis
+        }
 
         return AudioPcmData(samples, sampleRate, channels)
     }

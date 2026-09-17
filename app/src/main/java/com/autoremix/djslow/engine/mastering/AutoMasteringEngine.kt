@@ -78,6 +78,14 @@ class MasterBlockProcessor(
         sampleRate = sampleRate
     )
 
+    private val monoBassFilter = BiquadFilter(
+        type = BiquadFilter.FilterType.LOW_PASS,
+        frequencyHz = 120.0f,
+        sampleRate = sampleRate,
+        q = 0.7071f
+    )
+    private val monoBassBuffer = FloatArray(16384 * channels)
+
     fun processBlock(blockSamples: FloatArray) {
         if (blockSamples.isEmpty()) return
 
@@ -103,7 +111,8 @@ class MasterBlockProcessor(
 
         // 4. Stereo Control
         if (channels == 2) {
-            StereoEngine.monoBass(blockSamples, sampleRate = sampleRate, crossoverHz = 120.0f)
+            val buf = if (blockSamples.size <= monoBassBuffer.size) monoBassBuffer else FloatArray(blockSamples.size)
+            StereoEngine.monoBass(blockSamples, monoBassFilter, buf)
             StereoEngine.adjustWidth(blockSamples, preset.stereoWidth)
         }
 

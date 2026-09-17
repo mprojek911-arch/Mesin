@@ -112,16 +112,17 @@ object AudioMemoryManager {
     }
 
     /**
-     * Melakukan pembersihan garbage collector jika memori kritis di bawah batas aman.
+     * Melakukan pembersihan buffer pool jika memori kritis di bawah batas aman.
+     * Tanpa memanggil System.gc() manual agar performa audio thread tetap deterministik.
      */
     fun trimMemoryIfNeeded(tag: String = "Engine") {
         val snap = getMemorySnapshot()
         if (snap.availableHeapMb < MIN_FREE_HEAP_MB) {
             LogChatManager.warn(
                 module = LogModule.SYSTEM,
-                message = "[WARNING] [MEMORY] $tag: Memori kritis (${snap.availableHeapMb}MB tersedia). Memanggil System.gc()."
+                message = "[WARNING] [MEMORY] $tag: Memori kritis (${snap.availableHeapMb}MB tersedia). Membersihkan AudioBufferPool."
             )
-            System.gc()
+            AudioBufferPool.clear()
         }
     }
 }

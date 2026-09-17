@@ -49,18 +49,19 @@ class RealDeviceFullTrack137sTest {
         LogChatManager.clearLogs()
         val runtime = Runtime.getRuntime()
 
-        val checkpoints = mutableListOf<MemoryCheckpoint>()
-        fun recordMemory(stage: String) {
+        val recordedStages = mutableSetOf<String>()
+        val checkpoints = mutableMapOf<String, Double>()
+        fun recordCheckpoint(stage: String) {
+            System.gc()
             val used = (runtime.totalMemory() - runtime.freeMemory()) / (1024.0 * 1024.0)
-            val max = runtime.maxMemory() / (1024.0 * 1024.0)
-            checkpoints.add(MemoryCheckpoint(stage, used, max))
-            println(String.format("[MEMORY MONITOR] Stage=%-15s | HeapUsed=%.2f MB | HeapMax=%.2f MB | BlockSize=16384 frames", stage, used, max))
+            checkpoints[stage] = maxOf(checkpoints[stage] ?: 0.0, used)
+            println(String.format("[CHECKPOINT] %-12s: %.2f MB", stage, used))
         }
 
         // ==============================================================
         // TAHAP 1: INPUT & DECODE (137 Detik Vokal, 44100 Hz, Stereo)
         // ==============================================================
-        recordMemory("INPUT")
+        recordCheckpoint("INPUT")
         val sampleRate = 44100
         val durationSeconds = 137
         val totalFrames = durationSeconds * sampleRate // 6,041,700 frames
@@ -85,7 +86,7 @@ class RealDeviceFullTrack137sTest {
             vocalSamples[i * channels + 1] = sampleVal
         }
         val vocalPcm = AudioPcmData(vocalSamples, sampleRate, channels)
-        recordMemory("DECODE")
+        recordCheckpoint("DECODE")
 
         // ==============================================================
         // TAHAP 2 s.d. 10: FULL AUTO REMIX (DJ SLOW BASS, FULL 137 DETIK)
@@ -99,23 +100,20 @@ class RealDeviceFullTrack137sTest {
             generate30sPreviewOnly = false // FULL REMIX 137 DETIK!
         ) { status, progress, message ->
             when (status) {
-                OutputEngine.OutputStatus.ANALYZING -> if (progress <= 0.15f) recordMemory("ANALISIS")
-                OutputEngine.OutputStatus.PLANNING -> recordMemory("MUSICAL MAP")
-                OutputEngine.OutputStatus.ARRANGING -> recordMemory("ARRANGEMENT")
-                OutputEngine.OutputStatus.GENERATING -> recordMemory("GENERATOR")
-                OutputEngine.OutputStatus.VOCAL_PROCESSING -> recordMemory("VOCAL FX")
-                OutputEngine.OutputStatus.MIXING -> if (progress <= 0.70f) recordMemory("MIX") else recordMemory("MASTER")
-                OutputEngine.OutputStatus.RENDERING -> recordMemory("EXPORT")
+                OutputEngine.OutputStatus.ANALYZING -> if (progress <= 0.15f && recordedStages.add("ANALISIS")) recordCheckpoint("ANALISIS")
+                OutputEngine.OutputStatus.GENERATING -> if (recordedStages.add("GENERATION")) recordCheckpoint("GENERATION")
+                OutputEngine.OutputStatus.VOCAL_PROCESSING -> if (recordedStages.add("VOCAL FX")) recordCheckpoint("VOCAL FX")
+                OutputEngine.OutputStatus.MIXING -> if (progress >= 0.75f && recordedStages.add("MIX/MASTER")) recordCheckpoint("MIX/MASTER")
+                OutputEngine.OutputStatus.RENDERING -> if (recordedStages.add("EXPORT")) recordCheckpoint("EXPORT")
                 else -> {}
             }
-            println(String.format("Progress [%.0f%%] %s: %s", progress * 100f, status.name, message))
         }
 
         assertTrue("Workflow Remix 137 detik harus sukses tanpa exception: ${remixResult.exceptionOrNull()?.message}", remixResult.isSuccess)
         val workflowResult = remixResult.getOrThrow()
         val wavFile = workflowResult.masterWavFile
 
-        recordMemory("EXPORT")
+        recordCheckpoint("EXPORT")
 
         // ==============================================================
         // TAHAP 8: FULL EXPORT VALIDATION
@@ -180,7 +178,7 @@ class RealDeviceFullTrack137sTest {
         // TAHAP 9: PLAYBACK VALIDATION
         // ==============================================================
         println("=== VALIDASI PLAYBACK DENGAN AUDIOPLAYER ===")
-        recordMemory("PLAYBACK")
+        recordCheckpoint("PLAYBACK")
         val dataSource = DataSource.toDataSource(wavFile.absolutePath)
         ShadowMediaPlayer.addMediaInfo(dataSource, ShadowMediaPlayer.MediaInfo(137000, 0))
         val audioPlayer = AudioPlayer()
@@ -248,11 +246,12 @@ class RealDeviceFullTrack137sTest {
         // ==============================================================
         println("============================================================")
         println("MONITOR MEMORI DAN STREAMING CHUNKS:")
-        for (cp in checkpoints) {
-            println(String.format("  Stage: %-15s | Heap: %6.2f MB / %6.2f MB | Block: %d frames", cp.stage, cp.heapUsedMb, cp.heapMaxMb, cp.blockSize))
+        for ((stage, usedMb) in checkpoints) {
+            println(String.format("  [CHECKPOINT] %-12s: %.2f MB", stage, usedMb))
         }
-        val peakHeap = checkpoints.maxOf { it.heapUsedMb }
-        println(String.format("PEAK HEAP TERCATAT: %.2f MB (Batas aman JVM/Android, Zero OOM)", peakHeap))
+        val peakGlobal = checkpoints.values.maxOrNull() ?: 0.0
+        println(String.format("  [CHECKPOINT] PEAK GLOBAL : %.2f MB", peakGlobal))
         println("============================================================")
+        assertTrue("Peak memory global harus di bawah batas 200 MB (heap aman 192-256 MB): $peakGlobal MB", peakGlobal < 200.0)
     }
 }

@@ -105,14 +105,30 @@ object KeyDetector {
      * Menggunakan Goertzel filter / bank bandpass pada rentang oktaf C2 hingga C6.
      */
     fun computeChromagram(pcm: AudioPcmData): FloatArray {
+        return computeChromagram(
+            samples = pcm.samples,
+            channels = pcm.channels,
+            sampleRate = pcm.sampleRate,
+            startFrameOffset = 0,
+            frameCount = pcm.totalFrames
+        )
+    }
+
+    /**
+     * Menghitung vektor Chroma langsung dari rentang sampel tanpa alokasi array slice.
+     */
+    fun computeChromagram(
+        samples: FloatArray,
+        channels: Int,
+        sampleRate: Int,
+        startFrameOffset: Int,
+        frameCount: Int
+    ): FloatArray {
         val chroma = DoubleArray(12)
-        val samples = pcm.samples
-        val channels = pcm.channels
-        val sampleRate = pcm.sampleRate
 
         // Analisis potongan hingga 45 detik agar optimal dan cepat
-        val maxFrames = minOf(pcm.totalFrames, sampleRate * 45)
-        val step = max(1, pcm.totalFrames / maxFrames)
+        val maxFrames = minOf(frameCount, sampleRate * 45)
+        val step = max(1, frameCount / maxFrames)
 
         // Rentang MIDI 36 (C2 ~ 65.4 Hz) hingga MIDI 84 (C6 ~ 1046.5 Hz)
         val octaves = 4 // oktaf 2, 3, 4, 5
@@ -121,8 +137,8 @@ object KeyDetector {
         val blockCount = maxOf(1, maxFrames / windowSize)
 
         for (b in 0 until blockCount) {
-            val startFrame = b * windowSize * step
-            if (startFrame + windowSize > pcm.totalFrames) break
+            val startFrame = startFrameOffset + (b * windowSize * step)
+            if (startFrame + windowSize > startFrameOffset + frameCount) break
 
             for (pitchClass in 0 until 12) {
                 var pitchEnergy = 0.0

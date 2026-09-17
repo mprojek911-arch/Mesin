@@ -220,6 +220,7 @@ object RemixWorkflowEngine {
             val channels = 2
             val musicBlock = FloatArray(blockSize * channels)
             val mixedBlock = FloatArray(blockSize * channels)
+            val tempGenBlock = FloatArray(blockSize * channels)
 
             val vocalVol = remixPlan.mixPlan.vocalVolume
             val beatVol = remixPlan.mixPlan.beatVolume
@@ -236,7 +237,7 @@ object RemixWorkflowEngine {
                     val frameCount = minOf(blockSize.toLong(), totalFrames.toLong() - startFrame).toInt()
                     val sampleCount = frameCount * channels
 
-                    // Render instrumen musik langsung untuk blok ini
+                    // Render instrumen musik langsung untuk blok ini (Zero Allocation)
                     MusicGeneratorEngine.renderMusicBlock(
                         startFrame = startFrame,
                         frameCount = frameCount,
@@ -244,7 +245,8 @@ object RemixWorkflowEngine {
                         timeline = masterTimeline,
                         events = scheduledEvents,
                         arrangement = arrangement,
-                        outStereo = musicBlock
+                        outStereo = musicBlock,
+                        tempBuffer = tempGenBlock
                     )
 
                     // Summing vokal dan beat ke mixedBlock
@@ -261,15 +263,12 @@ object RemixWorkflowEngine {
                         mixedBlock[i] = s * masterGain
                     }
 
-                    // Master processor untuk blok ini (in-place)
+                    // Master processor untuk blok ini (in-place, zero slice allocation)
                     if (sampleCount < mixedBlock.size) {
-                        val activeSlice = mixedBlock.copyOfRange(0, sampleCount)
-                        masterProcessor.processBlock(activeSlice)
-                        streamingWriter.writeChunk(activeSlice, 0, sampleCount)
-                    } else {
-                        masterProcessor.processBlock(mixedBlock)
-                        streamingWriter.writeChunk(mixedBlock, 0, sampleCount)
+                        java.util.Arrays.fill(mixedBlock, sampleCount, mixedBlock.size, 0f)
                     }
+                    masterProcessor.processBlock(mixedBlock)
+                    streamingWriter.writeChunk(mixedBlock, 0, sampleCount)
 
                     val progressFrac = (blockIndex + 1).toFloat() / totalBlocks
                     onStatusChanged?.invoke(
@@ -280,6 +279,7 @@ object RemixWorkflowEngine {
                 }
             } finally {
                 streamingWriter.close()
+                com.autoremix.djslow.engine.pcm.AudioBufferPool.clear()
             }
             val finalWavFile = targetFile
 

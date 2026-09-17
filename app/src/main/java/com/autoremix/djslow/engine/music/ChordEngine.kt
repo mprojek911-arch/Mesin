@@ -144,17 +144,21 @@ object ChordEngine {
         val length = endSample - startSample
         if (length < 2048) return null
 
-        val safeStart = startSample.coerceIn(0, pcm.samples.size - 1)
-        val safeEnd = endSample.coerceIn(safeStart, pcm.samples.size)
-        val count = safeEnd - safeStart
-        if (count < 2048) return null
+        val safeStartSample = startSample.coerceIn(0, pcm.samples.size - 1)
+        val safeEndSample = endSample.coerceIn(safeStartSample, pcm.samples.size)
+        val sampleCount = safeEndSample - safeStartSample
+        if (sampleCount < 2048) return null
 
-        // Buat slice PCM sementara untuk menghitung chroma bar
-        val barSamples = FloatArray(count)
-        System.arraycopy(pcm.samples, safeStart, barSamples, 0, count)
-        val barPcm = AudioPcmData(barSamples, pcm.sampleRate, pcm.channels)
+        val startFrame = safeStartSample / pcm.channels
+        val frameCount = sampleCount / pcm.channels
 
-        val chroma = KeyDetector.computeChromagram(barPcm)
+        val chroma = KeyDetector.computeChromagram(
+            samples = pcm.samples,
+            channels = pcm.channels,
+            sampleRate = pcm.sampleRate,
+            startFrameOffset = startFrame,
+            frameCount = frameCount
+        )
         if (chroma.all { it <= 1e-5f }) return null
 
         // Kandidat akor: diutamakan akor diatonik dalam tangga nada

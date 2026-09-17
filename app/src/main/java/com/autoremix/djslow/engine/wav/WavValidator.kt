@@ -55,8 +55,9 @@ object WavValidator {
 
     /**
      * Memvalidasi berkas WAV. Jika gagal mengembalikan error terstruktur: "Rendering gagal. Silakan ulangi."
+     * [scanContent] jika false hanya memvalidasi integritas header RIFF dan parameter audio tanpa scan stream data.
      */
-    fun validate(file: File): ValidationResult {
+    fun validate(file: File, scanContent: Boolean = true): ValidationResult {
         // 1. Periksa keberadaan berkas fisik
         if (!file.exists() || !file.isFile) {
             return ValidationResult(
@@ -156,34 +157,50 @@ object WavValidator {
                     )
                 }
 
-                // 7. Ekstraksi seluruh sampel PCM Float untuk analisis Loudness & Anti-Clipping
+                // Jika hanya validasi header (misal sebelum playback), kembalikan sukses tanpa membaca data
+                if (!scanContent) {
+                    return ValidationResult(
+                        isValid = true,
+                        errorMessage = null,
+                        durationMs = durationMs,
+                        sampleRate = sampleRate,
+                        channels = channels,
+                        bitsPerSample = bitsPerSample,
+                        fileSizeBytes = fileSize
+                    )
+                }
+
+                // 7. Validasi sampel PCM Float secara streaming (Zero Full-Track Allocation)
                 val sampleCount = totalFrames * channels
-                val samples = FloatArray(sampleCount)
-                val buffer = ByteArray(8192)
+                val meter = LoudnessMeter.StreamingLoudnessMeter(sampleRate, channels)
+                val byteBuffer = ByteArray(8192)
+                val floatChunk = FloatArray(4096)
                 var bytesRead: Int
-                var sampleIndex = 0
+                var totalSamplesProcessed = 0
 
-                while (input.read(buffer).also { bytesRead = it } > 0 && sampleIndex < sampleCount) {
-                    val sampleBuffer = ByteBuffer.wrap(buffer, 0, bytesRead).order(ByteOrder.LITTLE_ENDIAN)
-                    while (sampleBuffer.remaining() >= 2 && sampleIndex < sampleCount) {
+                while (input.read(byteBuffer).also { bytesRead = it } > 0 && totalSamplesProcessed < sampleCount) {
+                    val sampleBuffer = ByteBuffer.wrap(byteBuffer, 0, bytesRead).order(ByteOrder.LITTLE_ENDIAN)
+                    var chunkIndex = 0
+                    while (sampleBuffer.remaining() >= 2 && totalSamplesProcessed < sampleCount && chunkIndex < floatChunk.size) {
                         val s16 = sampleBuffer.short.toFloat()
-                        val s = s16 / 32768.0f
+                        floatChunk[chunkIndex++] = s16 / 32768.0f
+                        totalSamplesProcessed++
+                    }
 
+                    if (chunkIndex > 0) {
+                        meter.processChunk(floatChunk, 0, chunkIndex)
                         // 8. Cek NaN / Infinity
-                        if (s.isNaN() || s.isInfinite()) {
+                        if (meter.hasInvalidSample) {
                             return ValidationResult(
                                 isValid = false,
                                 errorMessage = "Rendering gagal. Silakan ulangi. (Ditemukan nilai NaN/Infinity pada audio)"
                             )
                         }
-
-                        samples[sampleIndex++] = s
                     }
                 }
 
-                // 9. Analisis Loudness Nyata (LUFS, True Peak, RMS, Peak)
-                val pcmData = AudioPcmData(samples, sampleRate, channels)
-                val report = LoudnessMeter.analyze(pcmData)
+                // 9. Analisis Loudness Nyata (LUFS, True Peak, RMS, Peak) dari Streaming Meter
+                val report = meter.finish()
 
                 // 10. Cek Silence
                 if (report.peakLinear < 0.001f) {

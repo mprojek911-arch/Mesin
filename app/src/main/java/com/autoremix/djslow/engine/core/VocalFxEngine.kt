@@ -119,6 +119,10 @@ object VocalFxEngine {
             1.0f
         }
 
+        if (ratio == 1.0f && targetFrames == srcFrames) {
+            return source
+        }
+
         val outFrames = targetFrames
         val outSamples = FloatArray(outFrames * 2)
         val srcSamples = source.samples

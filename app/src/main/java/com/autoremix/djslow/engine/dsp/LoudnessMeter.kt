@@ -67,116 +67,179 @@ object LoudnessMeter {
             )
         }
 
-        // 1. Hitung Peak Linear dan RMS Standar
-        var maxPeak = 0.0f
-        var sumSquares = 0.0
+        val meter = StreamingLoudnessMeter(sampleRate, channels)
+        meter.processChunk(samples, 0, samples.size)
+        return meter.finish()
+    }
 
-        for (i in samples.indices) {
-            val s = samples[i]
-            val a = abs(s)
-            if (a > maxPeak) maxPeak = a
-            sumSquares += (s.toDouble() * s.toDouble())
-        }
+    /**
+     * Pengukur Loudness Streaming BS.1770-4 berbasis blok kecil (Zero Full-Track Allocation).
+     */
+    class StreamingLoudnessMeter(val sampleRate: Int = 44100, val channels: Int = 2) {
+        private var maxPeak = 0.0f
+        private var sumSquares = 0.0
+        private var totalSamplesCount = 0L
+        private var highestTruePeak = 0.0f
+        private var foundNanOrInf = false
 
-        val rmsLinear = sqrt(sumSquares / samples.size).toFloat()
-        val peakDbfs = if (maxPeak > 1e-6f) (20.0 * log10(maxPeak.toDouble())).toFloat() else -96.0f
-        val rmsDbfs = if (rmsLinear > 1e-6f) (20.0 * log10(rmsLinear.toDouble())).toFloat() else -96.0f
+        private val lastSamples = FloatArray(3 * channels)
+        private var hasLastSamples = false
 
-        // 2. Estimasi True Peak (dBTP) dengan 4x Cubic Hermite Inter-sample Reconstruction
-        val truePeakLinear = estimateTruePeak(samples, channels)
-        val truePeakDbtp = if (truePeakLinear > 1e-6f) (20.0 * log10(truePeakLinear.toDouble())).toFloat() else -96.0f
-
-        // 3. Terapkan Filter K-Weighting ITU-R BS.1770-4 dalam sub-blok 100ms
-        // Tahap 1: High Shelf Filter (Pre-filter: ~1681 Hz, +4 dB)
-        // Tahap 2: High Pass Filter (RLB filter: ~38 Hz cut)
-        val stage1Filter = BiquadFilter(
+        private val stage1Filter = BiquadFilter(
             type = BiquadFilter.FilterType.HIGH_SHELF,
             frequencyHz = 1681.0f,
             sampleRate = sampleRate,
             q = 0.7071f,
             gainDb = 4.0f
         )
-        val stage2Filter = BiquadFilter(
+        private val stage2Filter = BiquadFilter(
             type = BiquadFilter.FilterType.HIGH_PASS,
             frequencyHz = 38.0f,
             sampleRate = sampleRate,
             q = 0.50f
         )
 
-        // 4. Hitung Blok Loudness 400ms dengan 75% overlap (100ms hop)
-        // Menghitung daya sub-blok 100ms secara streaming tanpa menduplikasi seluruh array PCM ke memori.
-        val hopSize = (sampleRate * 0.100f).toInt().coerceAtLeast(1)
-        val subBlockSamples = hopSize * channels
-        val subBlockBuffer = FloatArray(subBlockSamples)
-        val subBlockPowers = mutableListOf<Double>()
+        private val hopSize = (sampleRate * 0.100f).toInt().coerceAtLeast(1)
+        private val subBlockSamples = hopSize * channels
+        private val subBlockBuffer = FloatArray(subBlockSamples)
+        private var subBlockFilled = 0
+        private val subBlockPowers = ArrayList<Double>(2048)
 
-        var subFrameStart = 0
-        while (subFrameStart + hopSize <= totalFrames) {
-            val srcOffset = subFrameStart * channels
-            System.arraycopy(samples, srcOffset, subBlockBuffer, 0, subBlockSamples)
-            stage1Filter.processInterleaved(subBlockBuffer, channels)
-            stage2Filter.processInterleaved(subBlockBuffer, channels)
+        val hasInvalidSample: Boolean get() = foundNanOrInf
 
-            var subSum = 0.0
-            for (i in 0 until subBlockSamples) {
-                val s = subBlockBuffer[i].toDouble()
-                subSum += s * s
+        fun processChunk(chunk: FloatArray, offset: Int = 0, count: Int = chunk.size) {
+            if (count <= 0) return
+            totalSamplesCount += count
+            val step = channels
+
+            // 1. Peak Linear, RMS, and NaN/Inf check
+            val endIdx = offset + count
+            for (i in offset until endIdx) {
+                val s = chunk[i]
+                if (s.isNaN() || s.isInfinite()) {
+                    foundNanOrInf = true
+                    continue
+                }
+                val a = abs(s)
+                if (a > maxPeak) maxPeak = a
+                sumSquares += (s.toDouble() * s.toDouble())
             }
-            subBlockPowers.add(subSum / subBlockSamples)
-            subFrameStart += hopSize
+
+            // 2. True Peak estimation via Cubic Hermite
+            for (i in offset until endIdx step step) {
+                val s1 = abs(chunk[i])
+                val s2 = if (i + step < endIdx) abs(chunk[i + step]) else s1
+                if (s1 > 0.70f || s2 > 0.70f) {
+                    val s0 = if (i - step >= offset) abs(chunk[i - step])
+                    else if (hasLastSamples) abs(lastSamples[0]) else s1
+                    val s3 = if (i + 2 * step < endIdx) abs(chunk[i + 2 * step]) else s2
+
+                    for (sub in 1..3) {
+                        val t = sub / 4.0f
+                        val c0 = -0.5f * s0 + 1.5f * s1 - 1.5f * s2 + 0.5f * s3
+                        val c1 = s0 - 2.5f * s1 + 2.0f * s2 - 0.5f * s3
+                        val c2 = -0.5f * s0 + 0.5f * s2
+                        val c3 = s1
+                        val interp = c0 * t * t * t + c1 * t * t + c2 * t + c3
+                        if (interp > highestTruePeak) highestTruePeak = interp
+                    }
+                } else {
+                    if (s1 > highestTruePeak) highestTruePeak = s1
+                }
+            }
+            if (count >= 3 * step) {
+                System.arraycopy(chunk, endIdx - 3 * step, lastSamples, 0, 3 * step)
+                hasLastSamples = true
+            }
+
+            // 3. Sub-block 100ms K-weighting accumulation
+            var srcPos = offset
+            var remaining = count
+            while (remaining > 0) {
+                val needed = subBlockSamples - subBlockFilled
+                val toCopy = minOf(remaining, needed)
+                System.arraycopy(chunk, srcPos, subBlockBuffer, subBlockFilled, toCopy)
+                subBlockFilled += toCopy
+                srcPos += toCopy
+                remaining -= toCopy
+
+                if (subBlockFilled == subBlockSamples) {
+                    stage1Filter.processInterleaved(subBlockBuffer, channels)
+                    stage2Filter.processInterleaved(subBlockBuffer, channels)
+                    var subSum = 0.0
+                    for (k in 0 until subBlockSamples) {
+                        val v = subBlockBuffer[k].toDouble()
+                        subSum += v * v
+                    }
+                    subBlockPowers.add(subSum / subBlockSamples)
+                    subBlockFilled = 0
+                }
+            }
         }
 
-        // Blok 400ms dibentuk dari 4 sub-blok 100ms berturut-turut (overlap 75%)
-        val blockPowers = mutableListOf<Double>()
-        if (subBlockPowers.size >= 4) {
-            for (i in 0..subBlockPowers.size - 4) {
-                val mean400ms = (subBlockPowers[i] + subBlockPowers[i + 1] + subBlockPowers[i + 2] + subBlockPowers[i + 3]) / 4.0
-                blockPowers.add(mean400ms)
+        fun finish(): LoudnessReport {
+            if (subBlockFilled > 0) {
+                val active = subBlockBuffer.copyOfRange(0, subBlockFilled)
+                stage1Filter.processInterleaved(active, channels)
+                stage2Filter.processInterleaved(active, channels)
+                var subSum = 0.0
+                for (k in 0 until subBlockFilled) {
+                    val v = active[k].toDouble()
+                    subSum += v * v
+                }
+                subBlockPowers.add(subSum / subBlockFilled)
             }
-        } else if (subBlockPowers.isNotEmpty()) {
-            blockPowers.add(subBlockPowers.average())
-        }
 
-        // 5. Gating ITU-R BS.1770
-        // Ambang batas absolut: -70 LKFS
-        val absoluteThresholdPower = 10.0.pow((-70.0 + 0.691) / 10.0)
-        val aboveAbsolute = blockPowers.filter { it > absoluteThresholdPower }
+            val rmsLinear = if (totalSamplesCount > 0) sqrt(sumSquares / totalSamplesCount).toFloat() else 0.0f
+            val peakDbfs = if (maxPeak > 1e-6f) (20.0 * log10(maxPeak.toDouble())).toFloat() else -96.0f
+            val rmsDbfs = if (rmsLinear > 1e-6f) (20.0 * log10(rmsLinear.toDouble())).toFloat() else -96.0f
+            val truePeakDbtp = if (highestTruePeak > 1e-6f) (20.0 * log10(highestTruePeak.toDouble())).toFloat() else -96.0f
 
-        var lufsIntegrated = -70.0f
-        var dynamicRange = 0.0f
-
-        if (aboveAbsolute.isNotEmpty()) {
-            val meanAbsolute = aboveAbsolute.average()
-            val lkfsAbsolute = -0.691 + 10.0 * log10(meanAbsolute)
-
-            // Ambang batas relatif: 10 dB di bawah rata-rata yang lolos gate absolut
-            val relativeThresholdPower = 10.0.pow((lkfsAbsolute - 10.0 + 0.691) / 10.0)
-            val aboveRelative = aboveAbsolute.filter { it > relativeThresholdPower }
-
-            if (aboveRelative.isNotEmpty()) {
-                val meanRelative = aboveRelative.average()
-                lufsIntegrated = (-0.691 + 10.0 * log10(meanRelative)).toFloat()
-
-                // Hitung estimasi dynamic range (Loudness Range LU)
-                val sorted = aboveRelative.map { (-0.691 + 10.0 * log10(it)).toFloat() }.sorted()
-                val p10 = sorted[(sorted.size * 0.10).toInt()]
-                val p95 = sorted[(sorted.size * 0.95).toInt().coerceAtMost(sorted.size - 1)]
-                dynamicRange = max(0.0f, p95 - p10)
+            val blockPowers = ArrayList<Double>(subBlockPowers.size)
+            if (subBlockPowers.size >= 4) {
+                for (i in 0..subBlockPowers.size - 4) {
+                    val mean400ms = (subBlockPowers[i] + subBlockPowers[i + 1] + subBlockPowers[i + 2] + subBlockPowers[i + 3]) / 4.0
+                    blockPowers.add(mean400ms)
+                }
+            } else if (subBlockPowers.isNotEmpty()) {
+                blockPowers.add(subBlockPowers.average())
             }
+
+            val absoluteThresholdPower = 10.0.pow((-70.0 + 0.691) / 10.0)
+            val aboveAbsolute = blockPowers.filter { it > absoluteThresholdPower }
+
+            var lufsIntegrated = -70.0f
+            var dynamicRange = 0.0f
+
+            if (aboveAbsolute.isNotEmpty()) {
+                val meanAbsolute = aboveAbsolute.average()
+                val lkfsAbsolute = -0.691 + 10.0 * log10(meanAbsolute)
+                val relativeThresholdPower = 10.0.pow((lkfsAbsolute - 10.0 + 0.691) / 10.0)
+                val aboveRelative = aboveAbsolute.filter { it > relativeThresholdPower }
+
+                if (aboveRelative.isNotEmpty()) {
+                    val meanRelative = aboveRelative.average()
+                    lufsIntegrated = (-0.691 + 10.0 * log10(meanRelative)).toFloat()
+                    val sorted = aboveRelative.map { (-0.691 + 10.0 * log10(it)).toFloat() }.sorted()
+                    val p10 = sorted[(sorted.size * 0.10).toInt()]
+                    val p95 = sorted[(sorted.size * 0.95).toInt().coerceAtMost(sorted.size - 1)]
+                    dynamicRange = max(0.0f, p95 - p10)
+                }
+            }
+
+            val isClipping = maxPeak >= 1.0f || highestTruePeak > 1.02f
+
+            return LoudnessReport(
+                lufsIntegrated = lufsIntegrated.coerceIn(-70.0f, 0.0f),
+                truePeakDbtp = truePeakDbtp,
+                peakLinear = maxPeak,
+                peakDbfs = peakDbfs,
+                rmsLinear = rmsLinear,
+                rmsDbfs = rmsDbfs,
+                dynamicRangeLu = dynamicRange,
+                isClipping = isClipping
+            )
         }
-
-        val isClipping = maxPeak >= 1.0f || truePeakLinear > 1.02f
-
-        return LoudnessReport(
-            lufsIntegrated = lufsIntegrated.coerceIn(-70.0f, 0.0f),
-            truePeakDbtp = truePeakDbtp,
-            peakLinear = maxPeak,
-            peakDbfs = peakDbfs,
-            rmsLinear = rmsLinear,
-            rmsDbfs = rmsDbfs,
-            dynamicRangeLu = dynamicRange,
-            isClipping = isClipping
-        )
     }
 
     /**

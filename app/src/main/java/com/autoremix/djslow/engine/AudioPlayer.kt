@@ -304,7 +304,7 @@ class AudioPlayer(
                 return Result.failure(ex)
             }
 
-            val valRes = WavValidator.validate(file)
+            val valRes = WavValidator.validate(file, scanContent = false)
             if (!valRes.isValid) {
                 val reason = valRes.errorMessage ?: "Format WAV atau integritas audio tidak valid"
                 val ex = IllegalStateException("🔴 AUDIO TIDAK VALID: $reason")
