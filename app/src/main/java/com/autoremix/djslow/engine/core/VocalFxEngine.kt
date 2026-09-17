@@ -59,7 +59,7 @@ object VocalFxEngine {
         // 2. High Pass Filter & EQ Pembersih Vokal
         alignedPcm = VocalProcessor.process(alignedPcm)
 
-        val outSamples = alignedPcm.samples.copyOf()
+        val outSamples = alignedPcm.samples
 
         // 3. Aplikasikan perilaku Vokal per Seksi Aransemen
         for (section in arrangement.sections) {

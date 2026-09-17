@@ -36,8 +36,8 @@ object RemixWorkflowEngine {
         val arrangement: ArrangementEngine.FullArrangement,
         val generatedMusic: MusicGeneratorEngine.GeneratedMusic,
         val vocalProcessedPcm: AudioPcmData,
-        val mixedPcm: AudioPcmData,
-        val masteredPcm: AudioPcmData,
+        val mixedPcm: AudioPcmData = AudioPcmData.createEmpty(44100, 2),
+        val masteredPcm: AudioPcmData = AudioPcmData.createEmpty(44100, 2),
         val masterWavFile: File,
         val preview30sFile: File? = null,
         val loudnessReport: LoudnessMeter.LoudnessReport? = null
@@ -155,24 +155,21 @@ object RemixWorkflowEngine {
             com.autoremix.djslow.engine.pcm.AudioMemoryManager.trimMemoryIfNeeded("Workflow.PreGeneration")
 
             // ==============================================================
-            // 6. MUSIC GENERATOR ENGINE
+            // 6. MUSIC GENERATOR ENGINE (Event Scheduling - 0 Full-Track PCM)
             // ==============================================================
-            onStatusChanged?.invoke(OutputEngine.OutputStatus.GENERATING, 0.40f, "MEMBUAT MUSIK...")
-            val musicGenRes = MusicGeneratorEngine.generateMusic(
+            onStatusChanged?.invoke(OutputEngine.OutputStatus.GENERATING, 0.40f, "MEMBUAT JADWAL MUSIK...")
+            val scheduledEvents = MusicGeneratorEngine.scheduleAllEvents(
                 timeline = masterTimeline,
                 remixPlan = remixPlan,
                 arrangement = arrangement
-            ) { frac, desc ->
-                onStatusChanged?.invoke(OutputEngine.OutputStatus.GENERATING, 0.40f + (frac * 0.15f), "MEMBUAT MUSIK... $desc")
-            }
-            if (musicGenRes.isFailure) {
-                val ex = musicGenRes.exceptionOrNull()!!
-                LogChatManager.error(LogModule.ARRANGEMENT, "Sintesis musik gagal: ${ex.message}", ex, stage = "GENERATOR")
-                LogChatManager.updatePipeline(PipelineStage.GENERATOR, StepStatus.FAILED, ex.message ?: "Generator error")
-                return@withContext Result.failure(ex)
-            }
-            val generatedMusic = musicGenRes.getOrThrow()
-            LogChatManager.updatePipeline(PipelineStage.GENERATOR, StepStatus.SUCCESS, "Drum, Bass, Akor, Melodi")
+            )
+            val generatedMusic = MusicGeneratorEngine.GeneratedMusic(
+                drumEvents = scheduledEvents.drumEvents,
+                bassEvents = scheduledEvents.bassEvents,
+                melodyEvents = scheduledEvents.melodyEvents,
+                transitionEvents = scheduledEvents.transitionEvents
+            )
+            LogChatManager.updatePipeline(PipelineStage.GENERATOR, StepStatus.SUCCESS, "Drum, Bass, Akor, Melodi (Streaming)")
 
             // ==============================================================
             // 7. VOCAL & FX ENGINE
@@ -199,90 +196,96 @@ object RemixWorkflowEngine {
             LogChatManager.updatePipeline(PipelineStage.VOCAL_FX, StepStatus.SUCCESS, "Presence & Ambience OK")
 
             // ==============================================================
-            // 8. INTELLIGENT MIX ENGINE
+            // 8, 9, 10. STREAMING MIXING, MASTERING & DIRECT WAV WRITER
+            // Pemrosesan blok per blok (16384 frames) langsung ke disk via StreamingWavWriter.
+            // TIDAK ADA ALOKASI FloatArray(totalFrames * channels) untuk instrumen dan master.
             // ==============================================================
-            onStatusChanged?.invoke(OutputEngine.OutputStatus.MIXING, 0.65f, "MIXING...")
-            val mixConfig = IntelligentMixEngine.IntelligentMixConfig(
-                vocalControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.vocalVolume),
-                beatControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.beatVolume),
-                drumControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.drumVolume),
-                bassControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.bassVolume),
-                chordControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.chordVolume),
-                melodyControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.melodyVolume),
-                padControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.padVolume),
-                fxControls = IntelligentMixEngine.TrackControls(volume = remixPlan.mixPlan.fxVolume),
-                masterGain = remixPlan.mixPlan.masterGain,
-                isAutoMixEnabled = remixPlan.mixPlan.isAutoMixEnabled
-            )
-            val mixRes = IntelligentMixEngine.performIntelligentMix(
-                vocalPcm = processedVocal,
-                beatPcm = effectiveBeatPcm,
-                drumPcm = generatedMusic.drumPcm,
-                bassPcm = generatedMusic.bassPcm,
-                chordPcm = generatedMusic.chordPcm,
-                melodyPcm = generatedMusic.melodyPcm,
-                padPcm = generatedMusic.padPcm,
-                fxPcm = generatedMusic.fxPcm,
-                drumEvents = generatedMusic.drumEvents,
-                remixPlan = remixPlan,
-                arrangement = arrangement,
-                config = mixConfig
-            ) { frac, desc ->
-                onStatusChanged?.invoke(OutputEngine.OutputStatus.MIXING, 0.65f + (frac * 0.12f), "MIXING... $desc")
-            }
-            if (mixRes.isFailure) {
-                val ex = mixRes.exceptionOrNull()!!
-                LogChatManager.error(LogModule.MIX, "Mixing gagal: ${ex.message}", ex, stage = "MIX")
-                LogChatManager.updatePipeline(PipelineStage.MIX, StepStatus.FAILED, ex.message ?: "Mix error")
-                return@withContext Result.failure(ex)
-            }
-            val mixedPcm = mixRes.getOrThrow()
-            LogChatManager.updatePipeline(PipelineStage.MIX, StepStatus.SUCCESS, "Auto Gain Staging OK")
-
-            // ==============================================================
-            // 9. MASTER ENGINE (Tonal EQ, Glue Comp, Saturation, True Peak Limiter)
-            // ==============================================================
-            onStatusChanged?.invoke(OutputEngine.OutputStatus.MASTERING, 0.80f, "MASTERING...")
-            val masterRes = MasterEngine.masterAudio(
-                inputPcm = mixedPcm,
-                preset = remixPlan.masterPlan.preset
-            ) { frac, desc ->
-                onStatusChanged?.invoke(OutputEngine.OutputStatus.MASTERING, 0.80f + (frac * 0.10f), "MASTERING... $desc")
-            }
-            if (masterRes.isFailure) {
-                val ex = masterRes.exceptionOrNull()!!
-                LogChatManager.error(LogModule.MASTER, "Mastering audio gagal: ${ex.message}", ex, stage = "MASTER")
-                LogChatManager.updatePipeline(PipelineStage.MASTER, StepStatus.FAILED, ex.message ?: "Master error")
-                return@withContext Result.failure(ex)
-            }
-            val masterOutput = masterRes.getOrThrow()
-            val masteredPcm = masterOutput.pcmData
-            LogChatManager.updatePipeline(PipelineStage.MASTER, StepStatus.SUCCESS, "Preset ${remixPlan.masterPlan.preset.label}")
-
-            // ==============================================================
-            // 10. OUTPUT ENGINE (Render Berkas Master WAV & Preview 30s)
-            // ==============================================================
-            onStatusChanged?.invoke(OutputEngine.OutputStatus.RENDERING, 0.90f, "RENDERING...")
-
-            val pcmToRender = if (generate30sPreviewOnly && masteredPcm.durationMs > 31_000L) {
-                OutputEngine.extract30SecondPreviewPcm(masteredPcm, arrangement)
-            } else {
-                masteredPcm
-            }
+            onStatusChanged?.invoke(OutputEngine.OutputStatus.MIXING, 0.65f, "STREAMING MIX & MASTER...")
+            LogChatManager.updatePipeline(PipelineStage.MIX, StepStatus.PENDING, "Streaming 16384-frame blocks...")
 
             val prefix = if (generate30sPreviewOnly) "Preview30s_${style.name}" else "MasterRemix_${style.name}"
             val targetFile = OutputEngine.createTempWavFile(context, prefix)
 
-            val renderFileRes = OutputEngine.renderWavFile(context, pcmToRender, targetFile) { frac, desc ->
-                onStatusChanged?.invoke(OutputEngine.OutputStatus.RENDERING, 0.90f + (frac * 0.06f), "RENDERING... $desc")
+            val totalFrames = masterTimeline.totalFrames.toInt()
+            val sampleRate = masterTimeline.sampleRate
+            val masterPreset = remixPlan.masterPlan.preset
+            val masterProcessor = com.autoremix.djslow.engine.mastering.MasterBlockProcessor(
+                preset = masterPreset,
+                sampleRate = sampleRate,
+                channels = 2
+            )
+            val streamingWriter = com.autoremix.djslow.engine.wav.StreamingWavWriter(targetFile, sampleRate, 2)
+
+            val blockSize = 16384
+            val channels = 2
+            val musicBlock = FloatArray(blockSize * channels)
+            val mixedBlock = FloatArray(blockSize * channels)
+
+            val vocalVol = remixPlan.mixPlan.vocalVolume
+            val beatVol = remixPlan.mixPlan.beatVolume
+            val masterGain = remixPlan.mixPlan.masterGain
+
+            val vocalSamples = processedVocal.samples
+            val beatSamples = effectiveBeatPcm?.samples
+
+            val totalBlocks = ((totalFrames + blockSize - 1) / blockSize).coerceAtLeast(1)
+
+            try {
+                for (blockIndex in 0 until totalBlocks) {
+                    val startFrame = blockIndex.toLong() * blockSize
+                    val frameCount = minOf(blockSize.toLong(), totalFrames.toLong() - startFrame).toInt()
+                    val sampleCount = frameCount * channels
+
+                    // Render instrumen musik langsung untuk blok ini
+                    MusicGeneratorEngine.renderMusicBlock(
+                        startFrame = startFrame,
+                        frameCount = frameCount,
+                        sampleRate = sampleRate,
+                        timeline = masterTimeline,
+                        events = scheduledEvents,
+                        arrangement = arrangement,
+                        outStereo = musicBlock
+                    )
+
+                    // Summing vokal dan beat ke mixedBlock
+                    val vocalStartSample = (startFrame * channels).toInt()
+                    for (i in 0 until sampleCount) {
+                        var s = musicBlock[i]
+                        val vocalIdx = vocalStartSample + i
+                        if (vocalIdx < vocalSamples.size) {
+                            s += vocalSamples[vocalIdx] * vocalVol
+                        }
+                        if (beatSamples != null && vocalIdx < beatSamples.size) {
+                            s += beatSamples[vocalIdx] * beatVol
+                        }
+                        mixedBlock[i] = s * masterGain
+                    }
+
+                    // Master processor untuk blok ini (in-place)
+                    if (sampleCount < mixedBlock.size) {
+                        val activeSlice = mixedBlock.copyOfRange(0, sampleCount)
+                        masterProcessor.processBlock(activeSlice)
+                        streamingWriter.writeChunk(activeSlice, 0, sampleCount)
+                    } else {
+                        masterProcessor.processBlock(mixedBlock)
+                        streamingWriter.writeChunk(mixedBlock, 0, sampleCount)
+                    }
+
+                    val progressFrac = (blockIndex + 1).toFloat() / totalBlocks
+                    onStatusChanged?.invoke(
+                        OutputEngine.OutputStatus.MIXING,
+                        0.65f + (progressFrac * 0.25f),
+                        "STREAMING MIX & MASTER... ${(progressFrac * 100).toInt()}%"
+                    )
+                }
+            } finally {
+                streamingWriter.close()
             }
-            if (renderFileRes.isFailure) {
-                val ex = renderFileRes.exceptionOrNull()!!
-                LogChatManager.error(LogModule.EXPORT, "Render berkas WAV gagal: ${ex.message}", ex, stage = "EXPORT")
-                LogChatManager.updatePipeline(PipelineStage.EXPORT, StepStatus.FAILED, ex.message ?: "Render error")
-                return@withContext Result.failure(ex)
-            }
-            val finalWavFile = renderFileRes.getOrThrow()
+            val finalWavFile = targetFile
+
+            LogChatManager.updatePipeline(PipelineStage.MIX, StepStatus.SUCCESS, "Streaming Mix OK")
+            LogChatManager.updatePipeline(PipelineStage.MASTER, StepStatus.SUCCESS, "Preset ${masterPreset.label}")
+            onStatusChanged?.invoke(OutputEngine.OutputStatus.RENDERING, 0.90f, "RENDERING SELESAI")
 
             // ==============================================================
             // 11. VALIDASI INTEGRITAS BERKAS KELUARAN
@@ -300,7 +303,7 @@ object RemixWorkflowEngine {
             LogChatManager.info(
                 LogModule.EXPORT,
                 "REMIX_COMPLETE: Hasil render ${finalWavFile.name} valid dan siap.",
-                detail = "Ukuran: ${finalWavFile.length() / 1024} KB | LUFS: ${masterOutput.loudnessReport.formattedLufs}",
+                detail = "Ukuran: ${finalWavFile.length() / 1024} KB",
                 stage = "EXPORT",
                 file = finalWavFile.name
             )
@@ -316,11 +319,9 @@ object RemixWorkflowEngine {
                 arrangement = arrangement,
                 generatedMusic = generatedMusic,
                 vocalProcessedPcm = processedVocal,
-                mixedPcm = mixedPcm,
-                masteredPcm = masteredPcm,
                 masterWavFile = finalWavFile,
                 preview30sFile = if (generate30sPreviewOnly) finalWavFile else null,
-                loudnessReport = masterOutput.loudnessReport
+                loudnessReport = null
             )
 
             Result.success(workflowResult)

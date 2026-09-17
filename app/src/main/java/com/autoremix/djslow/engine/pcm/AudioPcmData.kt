@@ -110,4 +110,10 @@ data class AudioPcmData(
         result = 31 * result + channels
         return result
     }
+
+    companion object {
+        fun createEmpty(sampleRate: Int = 44100, channels: Int = 2): AudioPcmData {
+            return AudioPcmData(FloatArray(0), sampleRate, channels)
+        }
+    }
 }

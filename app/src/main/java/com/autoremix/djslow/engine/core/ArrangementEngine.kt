@@ -68,6 +68,10 @@ object ArrangementEngine {
         fun getSectionForBar(bar: Int): ArrangedSection? {
             return sections.firstOrNull { bar in it.startBar until it.endBar }
         }
+
+        fun getSectionForSample(sample: Long): ArrangedSection? {
+            return sections.firstOrNull { sample in it.startSample until it.endSample }
+        }
     }
 
     /**
