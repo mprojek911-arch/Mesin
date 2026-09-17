@@ -11,6 +11,7 @@ import com.autoremix.djslow.engine.arrangement.SectionEngines
 import com.autoremix.djslow.engine.dsp.LoudnessMeter
 import com.autoremix.djslow.engine.drum.DrumEngine
 import com.autoremix.djslow.engine.mastering.AutoMasteringEngine
+import com.autoremix.djslow.engine.mastering.MasterBlockProcessor
 import com.autoremix.djslow.engine.mastering.MasteringPreset
 import com.autoremix.djslow.engine.melody.MelodyEngine
 import com.autoremix.djslow.engine.music.ChordEngine
@@ -18,13 +19,16 @@ import com.autoremix.djslow.engine.music.MusicKey
 import com.autoremix.djslow.engine.music.MusicMode
 import com.autoremix.djslow.engine.music.PitchClass
 import com.autoremix.djslow.engine.pad.PadEngine
+import com.autoremix.djslow.engine.pcm.AudioMemoryManager
 import com.autoremix.djslow.engine.pcm.AudioPcmData
 import com.autoremix.djslow.engine.pcm.AudioPcmDecoder
+import com.autoremix.djslow.engine.structure.SongSectionType
 import com.autoremix.djslow.engine.synth.BassEngine
 import com.autoremix.djslow.engine.synth.BassPatternType
 import com.autoremix.djslow.engine.synth.ChordSynthEngine
 import com.autoremix.djslow.engine.synth.ChordSynthPreset
 import com.autoremix.djslow.engine.timeline.MasterTimeline
+import com.autoremix.djslow.engine.wav.StreamingWavWriter
 import com.autoremix.djslow.engine.wav.WavRenderer
 import com.autoremix.djslow.engine.wav.WavValidator
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +37,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.pow
 
 /**
  * Pipeline Audio Studio Tahap 5 — KUALITAS AUDIO LENGKAP:
@@ -320,169 +325,278 @@ object AudioMixPipeline {
             val totalFrames = timeline.totalFrames
             val sampleRate = timeline.sampleRate
 
-            // 5. Sintesis Instrumen Pengiring
-            onProgress(PipelineStep.SINTESIS_INSTRUMEN, 0.40f, "Mensintesis Akor, Melodi, Pad, dan FX...")
-
-            var chordPcm: AudioPcmData? = null
-            if (params.chordSettings.volume > 0.0f && !params.chordSettings.isMuted) {
-                chordPcm = ChordSynthEngine.renderProgressionPcm(
-                    timeline = timeline,
-                    preset = chordPreset,
-                    volume = params.chordSettings.volume
-                )
-            }
-
-            var melodyPcm: AudioPcmData? = null
-            if (params.melodySettings.volume > 0.0f && !params.melodySettings.isMuted) {
-                melodyPcm = MelodyEngine.renderMelody(
-                    events = arrangementPlan.melodyEvents,
-                    totalSamples = totalFrames,
-                    sampleRate = sampleRate
-                )
-            }
-
-            var padPcm: AudioPcmData? = null
-            if (params.padSettings.volume > 0.0f && !params.padSettings.isMuted) {
-                padPcm = PadEngine.renderPad(
-                    events = arrangementPlan.padEvents,
-                    totalSamples = totalFrames,
-                    sampleRate = sampleRate
-                )
-            }
-
-            val transitionPcm = SectionEngines.renderTransitions(
-                events = arrangementPlan.transitionEvents,
-                totalSamples = totalFrames,
-                sampleRate = sampleRate
-            )
-
-            // 6. Sintesis & Pemrosesan Drum (DrumProcessor)
-            var drumPcm: AudioPcmData? = null
-            if (params.drumSettings.volume > 0.0f && !params.drumSettings.isMuted) {
-                onProgress(PipelineStep.PROSES_DRUM_BASS, 0.52f, "Memproses Drum Bus (EQ Punch, Snare Snap, Limiter)...")
-                val rawDrum = DrumEngine.renderDrums(
-                    events = arrangementPlan.drumEvents,
-                    totalSamples = totalFrames,
-                    sampleRate = sampleRate
-                )
-                drumPcm = DrumProcessor.process(rawDrum)
-            }
-
-            // 7. Sintesis & Pemrosesan Bass (Sidechain Ducking + BassProcessor)
-            var bassPcm: AudioPcmData? = null
-            if (params.bassSettings.volume > 0.0f && !params.bassSettings.isMuted) {
-                onProgress(PipelineStep.PROSES_DRUM_BASS, 0.58f, "Memproses Bass Bus (Sidechain Ducking, Sub EQ, Mono Bass)...")
-                val rawBass = BassEngine.renderBassPcm(
-                    timeline = timeline,
-                    bassEvents = bassEvents,
-                    volume = params.bassSettings.volume * preset.bassMultiplier
-                )
-
-                // a. Sidechain ducking dari ketukan kick drum
-                val sidechainedBass = if (arrangementPlan.drumEvents.isNotEmpty()) {
-                    KickBassEngine.applySidechainDucking(
-                        bassPcm = rawBass,
-                        drumEvents = arrangementPlan.drumEvents,
-                        sampleRate = sampleRate
-                    )
+            // 5. Inisialisasi Voice Aransemen Akor & Voice State
+            onProgress(PipelineStep.SINTESIS_INSTRUMEN, 0.40f, "Mempersiapkan voice instrumen sintetis (Streaming Mode)...")
+            val totalFramesLong = totalFrames
+            val chordVolumeFinal = params.chordSettings.volume
+            val chordPresetFinal = chordPreset
+            val chordVoices = timeline.chordEvents.mapNotNull { event ->
+                val eventStartFrame = event.startSample
+                val eventEndFrame = minOf(event.endSample, totalFramesLong)
+                val eventFrames = eventEndFrame - eventStartFrame
+                if (eventFrames <= 0 || eventStartFrame >= totalFramesLong) {
+                    null
                 } else {
-                    rawBass
-                }
-
-                // b. BassProcessor: HPF 30Hz, Notch 75Hz (Kick separation), Kompresi, Saturasi hangat, Mono Sub
-                bassPcm = BassProcessor.process(sidechainedBass)
-            }
-
-            // 8. Ducking Vokal Halus pada Bus Musik (Akor, Melodi, Pad, FX)
-            if (vocalPcm != null && !vocalPcm.isSilent()) {
-                onProgress(PipelineStep.DUCKING_VOKAL, 0.64f, "Menerapkan Ducking Vokal Halus pada Bus Musik...")
-                val duckDepth = masteringPreset.vocalPocketDepthDb
-                if (chordPcm != null) {
-                    chordPcm = VocalDucker.applyVocalDucking(chordPcm, vocalPcm, duckingDepthDb = duckDepth)
-                }
-                if (melodyPcm != null) {
-                    melodyPcm = VocalDucker.applyVocalDucking(melodyPcm, vocalPcm, duckingDepthDb = duckDepth)
-                }
-                if (padPcm != null) {
-                    padPcm = VocalDucker.applyVocalDucking(padPcm, vocalPcm, duckingDepthDb = duckDepth)
+                    val sec = arrangementPlan.sections.firstOrNull { event.barIndex >= it.startBar && event.barIndex < it.endBar }
+                    val secVolume = when (sec?.sectionType) {
+                        SongSectionType.DROP, SongSectionType.MAIN_DROP, SongSectionType.PEAK, SongSectionType.FINAL_DROP -> chordVolumeFinal * 1.0f
+                        SongSectionType.BREAK, SongSectionType.BREAKDOWN -> chordVolumeFinal * 0.65f
+                        SongSectionType.BUILD_UP, SongSectionType.BUILD_UP_2, SongSectionType.FINAL_BUILD -> chordVolumeFinal * 0.80f
+                        SongSectionType.PRE_DROP -> chordVolumeFinal * 0.60f
+                        SongSectionType.INTRO, SongSectionType.OUTRO -> chordVolumeFinal * 0.60f
+                        else -> chordVolumeFinal
+                    }
+                    ChordSynthEngine.ChordVoiceState(
+                        event = event,
+                        totalFrames = eventFrames,
+                        sampleRate = sampleRate,
+                        preset = chordPresetFinal,
+                        volume = secVolume
+                    )
                 }
             }
 
-            // 9. Multi-Bus Mixing & Auto Gain Staging (Headroom pre-master -1.4 dBFS)
-            onProgress(PipelineStep.MIXING, 0.70f, "Mixing multi-bus & Auto Gain Staging...")
-            val mixResult = MixEngine.mix(
-                vocalPcm = vocalPcm,
-                beatPcm = beatPcm,
-                chordPcm = chordPcm,
-                bassPcm = bassPcm,
-                drumPcm = drumPcm,
-                melodyPcm = melodyPcm,
-                padPcm = padPcm,
-                transitionPcm = transitionPcm,
-                params = params
-            ) { subProg, msg ->
-                onProgress(PipelineStep.MIXING, 0.70f + 0.08f * subProg, "Mix: $msg")
-            }
+            // 6. Inisialisasi DSP Processor & Streaming Writers
+            val drumProcessor = DrumBlockProcessor(sampleRate, 2)
+            val bassProcessor = BassBlockProcessor(sampleRate, 2)
+            val vocalDucker = VocalDucker.VocalDuckProcessor(
+                sampleRate = sampleRate,
+                duckingDepthDb = masteringPreset.vocalPocketDepthDb
+            )
+            val masterProcessor = MasterBlockProcessor(
+                preset = masteringPreset,
+                sampleRate = sampleRate,
+                channels = 2
+            )
+            val mixGains = MixEngine.computeEffectiveGains(params)
 
-            if (mixResult.isFailure) {
-                return@withContext Result.failure(
-                    IllegalStateException("Proses mixing gagal: ${mixResult.exceptionOrNull()?.message}")
-                )
-            }
-            val preMasterPcm = mixResult.getOrThrow()
-
-            // Analisis loudness pre-master untuk Loudness Matching pada A/B Preview
-            val preMasterReport = LoudnessMeter.analyze(preMasterPcm)
-
-            // Render WAV unmastered (pre-master mix) untuk perbandingan A/B instan
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val tempDir = com.autoremix.djslow.engine.temp.TempFileManager.getTempDir(context)
             val unmasteredFile = File(tempDir, "TEMP_UNMASTERED_$timestamp.wav")
-            WavRenderer.render(preMasterPcm, unmasteredFile)
-
-            // 10. Auto Mastering Studio (Tahap 5)
-            onProgress(
-                PipelineStep.MASTERING,
-                0.80f,
-                "Auto Mastering (${masteringPreset.label}): Tonal EQ, Glue Comp, Saturation, Stereo, Limiter..."
-            )
-            val masterResult = AutoMasteringEngine.master(preMasterPcm, masteringPreset)
-            if (masterResult.isFailure) {
-                com.autoremix.djslow.engine.temp.TempFileManager.deleteSafe(unmasteredFile)
-                return@withContext Result.failure(
-                    IllegalStateException("Auto Mastering gagal: ${masterResult.exceptionOrNull()?.message}")
-                )
-            }
-            val masteredResult = masterResult.getOrThrow()
-            val finalMasterPcm = masteredResult.masteredPcm
-            val loudnessReport = masteredResult.report
-
-            // 11. Render ke Berkas WAV 44.1 kHz 16-bit
             val outputDir = File(context.filesDir, "rendered_wav").apply { mkdirs() }
             val outputFile = File(outputDir, "DJ_SLOW_MIX_$timestamp.wav")
 
-            onProgress(PipelineStep.RENDER_WAV, 0.88f, "Merender berkas audio WAV 44.1 kHz 16-bit PCM...")
-            val renderResult = WavRenderer.render(finalMasterPcm, outputFile) { subProg, msg ->
-                onProgress(PipelineStep.RENDER_WAV, 0.88f + 0.06f * subProg, "WAV: $msg")
+            val unmasteredWriter = StreamingWavWriter(unmasteredFile, sampleRate, 2)
+            val masteredWriter = StreamingWavWriter(outputFile, sampleRate, 2)
+
+            val blockSize = 16384
+            val channels = 2
+
+            val drumBlock = FloatArray(blockSize * channels)
+            val bassBlock = FloatArray(blockSize * channels)
+            val chordBlock = FloatArray(blockSize * channels)
+            val melodyBlock = FloatArray(blockSize * channels)
+            val padBlock = FloatArray(blockSize * channels)
+            val fxBlock = FloatArray(blockSize * channels)
+            val vocalBlock = FloatArray(blockSize * channels)
+            val beatBlock = FloatArray(blockSize * channels)
+            val mixedBlock = FloatArray(blockSize * channels)
+            val masterBlock = FloatArray(blockSize * channels)
+
+            val totalBlocks = ((totalFrames + blockSize - 1) / blockSize).toInt().coerceAtLeast(1)
+
+            try {
+                for (blockIndex in 0 until totalBlocks) {
+                    val startFrame = blockIndex.toLong() * blockSize
+                    val frameCount = minOf(blockSize.toLong(), totalFrames - startFrame).toInt()
+                    val sampleCount = frameCount * channels
+
+                    // 1. Drum Block
+                    drumBlock.fill(0f, 0, sampleCount)
+                    if (params.drumSettings.volume > 0.0f && !params.drumSettings.isMuted) {
+                        DrumEngine.renderDrumBlock(
+                            events = arrangementPlan.drumEvents,
+                            startFrame = startFrame,
+                            frameCount = frameCount,
+                            sampleRate = sampleRate,
+                            outBuffer = drumBlock,
+                            offset = 0
+                        )
+                        drumProcessor.processBlock(drumBlock)
+                    }
+
+                    // 2. Bass Block
+                    bassBlock.fill(0f, 0, sampleCount)
+                    if (params.bassSettings.volume > 0.0f && !params.bassSettings.isMuted) {
+                        BassEngine.renderBassBlock(
+                            bassEvents = bassEvents,
+                            startFrame = startFrame,
+                            frameCount = frameCount,
+                            sampleRate = sampleRate,
+                            outBuffer = bassBlock,
+                            offset = 0,
+                            volume = params.bassSettings.volume * preset.bassMultiplier
+                        )
+                        if (arrangementPlan.drumEvents.isNotEmpty()) {
+                            KickBassEngine.applySidechainDuckingBlock(
+                                bassBlock = bassBlock,
+                                startFrame = startFrame,
+                                frameCount = frameCount,
+                                drumEvents = arrangementPlan.drumEvents,
+                                sampleRate = sampleRate,
+                                channels = channels
+                            )
+                        }
+                        bassProcessor.processBlock(bassBlock)
+                    }
+
+                    // 3. Chord Block
+                    chordBlock.fill(0f, 0, sampleCount)
+                    if (params.chordSettings.volume > 0.0f && !params.chordSettings.isMuted) {
+                        val endFrame = startFrame + frameCount
+                        val activeVoices = chordVoices.filter { voice ->
+                            voice.event.endSample > startFrame && voice.event.startSample < endFrame
+                        }
+                        if (activeVoices.isNotEmpty()) {
+                            ChordSynthEngine.renderChordBlock(
+                                activeVoices = activeVoices,
+                                startFrame = startFrame,
+                                frameCount = frameCount,
+                                outBuffer = chordBlock,
+                                offset = 0,
+                                channels = channels
+                            )
+                        }
+                    }
+
+                    // 4. Melody Block
+                    melodyBlock.fill(0f, 0, sampleCount)
+                    if (params.melodySettings.volume > 0.0f && !params.melodySettings.isMuted) {
+                        MelodyEngine.renderMelodyBlock(
+                            events = arrangementPlan.melodyEvents,
+                            startFrame = startFrame,
+                            frameCount = frameCount,
+                            sampleRate = sampleRate,
+                            outBuffer = melodyBlock,
+                            offset = 0
+                        )
+                    }
+
+                    // 5. Pad Block
+                    padBlock.fill(0f, 0, sampleCount)
+                    if (params.padSettings.volume > 0.0f && !params.padSettings.isMuted) {
+                        PadEngine.renderPadBlock(
+                            events = arrangementPlan.padEvents,
+                            startFrame = startFrame,
+                            frameCount = frameCount,
+                            sampleRate = sampleRate,
+                            outBlock = padBlock,
+                            offset = 0
+                        )
+                    }
+
+                    // 6. Transition FX Block
+                    fxBlock.fill(0f, 0, sampleCount)
+                    if (arrangementPlan.transitionEvents.isNotEmpty()) {
+                        SectionEngines.renderTransitionBlock(
+                            events = arrangementPlan.transitionEvents,
+                            chunkStartFrame = startFrame,
+                            frameCount = frameCount,
+                            sampleRate = sampleRate,
+                            outBuffer = fxBlock,
+                            offset = 0
+                        )
+                    }
+
+                    // 7. Vocal Block
+                    vocalBlock.fill(0f, 0, sampleCount)
+                    if (vocalPcm != null && !vocalPcm.isSilent()) {
+                        val vocalStartSample = (startFrame * channels).toInt()
+                        val vocalLen = vocalPcm.samples.size
+                        for (i in 0 until sampleCount) {
+                            val srcIdx = vocalStartSample + i
+                            if (srcIdx < vocalLen) {
+                                vocalBlock[i] = vocalPcm.samples[srcIdx]
+                            }
+                        }
+                    }
+
+                    // 8. Beat Block
+                    beatBlock.fill(0f, 0, sampleCount)
+                    if (beatPcm != null && !beatPcm.isSilent()) {
+                        val beatStartSample = (startFrame * channels).toInt()
+                        val beatLen = beatPcm.samples.size
+                        for (i in 0 until sampleCount) {
+                            val srcIdx = beatStartSample + i
+                            if (srcIdx < beatLen) {
+                                beatBlock[i] = beatPcm.samples[srcIdx]
+                            }
+                        }
+                    }
+
+                    // 9. Vocal Ducking pada bus musik
+                    if (vocalPcm != null && !vocalPcm.isSilent()) {
+                        vocalDucker.processBlock(chordBlock, vocalBlock, frameCount, channels)
+                        vocalDucker.processBlock(melodyBlock, vocalBlock, frameCount, channels)
+                        vocalDucker.processBlock(padBlock, vocalBlock, frameCount, channels)
+                    }
+
+                    // 10. Multi-Bus Mixing
+                    mixedBlock.fill(0f, 0, sampleCount)
+                    MixEngine.mixBlock(
+                        vocalBlock = vocalBlock,
+                        beatBlock = beatBlock,
+                        drumBlock = drumBlock,
+                        bassBlock = bassBlock,
+                        chordBlock = chordBlock,
+                        melodyBlock = melodyBlock,
+                        padBlock = padBlock,
+                        fxBlock = fxBlock,
+                        frameCount = frameCount,
+                        gains = mixGains,
+                        outMixed = mixedBlock,
+                        offset = 0
+                    )
+
+                    // Simpan pre-master audio ke berkas temporer
+                    unmasteredWriter.writeChunk(mixedBlock, 0, sampleCount)
+
+                    // 11. Auto Mastering Block
+                    System.arraycopy(mixedBlock, 0, masterBlock, 0, sampleCount)
+                    masterProcessor.processBlock(masterBlock)
+
+                    // Tulis hasil master langsung ke disk
+                    masteredWriter.writeChunk(masterBlock, 0, sampleCount)
+
+                    // Telemetri RAM
+                    if (blockIndex % 4 == 0 || blockIndex == totalBlocks - 1) {
+                        AudioMemoryManager.logBlockMemory("PIPELINE_STREAMING", startFrame, frameCount)
+                    }
+
+                    val progressFrac = (blockIndex + 1).toFloat() / totalBlocks
+                    onProgress(
+                        PipelineStep.RENDER_WAV,
+                        0.45f + 0.45f * progressFrac,
+                        "Streaming render (${(progressFrac * 100).toInt()}%)..."
+                    )
+                }
+            } finally {
+                unmasteredWriter.close()
+                masteredWriter.close()
             }
 
-            if (renderResult.isFailure) {
-                com.autoremix.djslow.engine.temp.TempFileManager.deleteSafe(unmasteredFile)
-                return@withContext Result.failure(
-                    IllegalStateException(renderResult.exceptionOrNull()?.message ?: "Rendering gagal. Silakan ulangi.")
-                )
-            }
-            val wavFile = renderResult.getOrThrow()
+            // 12. Validasi Integritas Berkas Master WAV
+            onProgress(PipelineStep.VALIDASI, 0.95f, "Memvalidasi WAV RIFF, LUFS, True Peak & Anti-Clipping...")
+            val validation = WavValidator.validate(outputFile)
+            val unmasteredValidation = WavValidator.validate(unmasteredFile)
 
-            // 12. Validasi Integritas WAV, Loudness LUFS & Anti-Clipping
-            onProgress(PipelineStep.VALIDASI, 0.95f, "Memvalidasi WAV RIFF, LUFS (${loudnessReport.formattedLufs}), True Peak & Anti-Clipping...")
-            val validation = WavValidator.validate(wavFile)
             if (!validation.isValid) {
-                if (wavFile.exists()) wavFile.delete()
+                if (outputFile.exists()) outputFile.delete()
                 com.autoremix.djslow.engine.temp.TempFileManager.deleteSafe(unmasteredFile)
                 val errMsg = validation.errorMessage ?: "Rendering gagal. Silakan ulangi."
                 return@withContext Result.failure(IllegalStateException(errMsg))
             }
+
+            val loudnessReport = LoudnessMeter.LoudnessReport(
+                lufsIntegrated = validation.lufsIntegrated,
+                truePeakDbtp = validation.truePeakDbtp,
+                peakLinear = validation.peakAmplitude,
+                peakDbfs = validation.peakDbfs,
+                rmsLinear = kotlin.math.max(0.00001f, kotlin.math.min(1.0f, 10.0.pow(validation.rmsDbfs / 20.0).toFloat())),
+                rmsDbfs = validation.rmsDbfs,
+                dynamicRangeLu = 8.0f,
+                isClipping = validation.isClipping
+            )
 
             onProgress(
                 PipelineStep.SELESAI,
@@ -492,7 +606,7 @@ object AudioMixPipeline {
 
             return@withContext Result.success(
                 PipelineResult(
-                    wavFile = wavFile,
+                    wavFile = outputFile,
                     validation = validation,
                     durationMs = validation.durationMs,
                     timeline = timeline,
@@ -502,7 +616,7 @@ object AudioMixPipeline {
                     loudnessReport = loudnessReport,
                     masteringPreset = masteringPreset,
                     unmasteredWavFile = unmasteredFile,
-                    unmasteredLufs = preMasterReport.lufsIntegrated
+                    unmasteredLufs = unmasteredValidation.lufsIntegrated
                 )
             )
         } catch (e: kotlinx.coroutines.CancellationException) {

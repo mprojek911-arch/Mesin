@@ -13,6 +13,75 @@ import kotlin.math.pow
  */
 object VocalDucker {
 
+    /**
+     * Prosesor Ducking Vokal per Blok yang menyimpan status filter attack/release
+     * melintasi batas blok pemrosesan (anti popping / anti klik).
+     */
+    class VocalDuckProcessor(
+        val sampleRate: Int = 44100,
+        val duckingDepthDb: Float = -3.0f,
+        val attackMs: Float = 25.0f,
+        val releaseMs: Float = 280.0f
+    ) {
+        private val attackAlpha = exp(-1.0 / (attackMs * 0.001 * sampleRate)).toFloat()
+        private val releaseAlpha = exp(-1.0 / (releaseMs * 0.001 * sampleRate)).toFloat()
+        private val targetDuckGain = 10.0f.pow(duckingDepthDb / 20.0f).coerceIn(0.5f, 0.95f)
+        private val vocalActiveThreshold = 0.012f
+
+        private var currentVocalEnv = 0.0f
+        private var currentDuckingGain = 1.0f
+
+        fun processBlock(
+            musicBlock: FloatArray,
+            vocalBlock: FloatArray?,
+            frameCount: Int,
+            channels: Int = 2,
+            offset: Int = 0
+        ) {
+            if (vocalBlock == null) return
+
+            for (f in 0 until frameCount) {
+                val vIdx = f * channels
+                val vL = if (vIdx < vocalBlock.size) abs(vocalBlock[vIdx]) else 0.0f
+                val vR = if (vIdx + 1 < vocalBlock.size) abs(vocalBlock[vIdx + 1]) else vL
+                val vPeak = max(vL, vR)
+
+                // Envelope deteksi vokal
+                currentVocalEnv = if (vPeak > currentVocalEnv) {
+                    0.15f * vPeak + 0.85f * currentVocalEnv
+                } else {
+                    0.005f * vPeak + 0.995f * currentVocalEnv
+                }
+
+                // Tentukan target ducking gain
+                val targetGain = if (currentVocalEnv > vocalActiveThreshold) {
+                    targetDuckGain
+                } else {
+                    1.0f
+                }
+
+                // Smoothing ducking gain (attack/release)
+                currentDuckingGain = if (targetGain < currentDuckingGain) {
+                    (1.0f - attackAlpha) * targetGain + attackAlpha * currentDuckingGain
+                } else {
+                    (1.0f - releaseAlpha) * targetGain + releaseAlpha * currentDuckingGain
+                }
+
+                val mIdx = offset + f * channels
+                if (mIdx + 1 < musicBlock.size) {
+                    musicBlock[mIdx] *= currentDuckingGain
+                    musicBlock[mIdx + 1] *= currentDuckingGain
+                }
+            }
+        }
+
+        fun reset() {
+            currentVocalEnv = 0.0f
+            currentDuckingGain = 1.0f
+        }
+    }
+
+    @Deprecated("Gunakan VocalDuckProcessor untuk pemrosesan blok streaming tanpa OOM")
     fun applyVocalDucking(
         musicPcm: AudioPcmData,
         vocalPcm: AudioPcmData?,

@@ -65,6 +65,23 @@ object AudioMemoryManager {
     }
 
     /**
+     * Mencatat telemetri memori per blok sesuai format standar FASE 19:
+     * [MEMORY] stage=... blockStartFrame=... blockFrames=... heapUsedMB=... heapMaxMB=...
+     */
+    fun logBlockMemory(
+        stage: String,
+        blockStartFrame: Long,
+        blockFrames: Int
+    ) {
+        val snap = getMemorySnapshot()
+        val heapUsedMb = snap.totalMemoryMb - snap.freeMemoryMb
+        LogChatManager.info(
+            module = LogModule.SYSTEM,
+            message = "[MEMORY] stage=$stage blockStartFrame=$blockStartFrame blockFrames=$blockFrames heapUsedMB=$heapUsedMb heapMaxMB=${snap.maxMemoryMb}"
+        )
+    }
+
+    /**
      * Memeriksa apakah durasi audio dan jumlah layer instrumen memerlukan streaming.
      */
     fun shouldUseStreaming(durationMs: Long, sampleRate: Int = 44100, channels: Int = 2): Boolean {

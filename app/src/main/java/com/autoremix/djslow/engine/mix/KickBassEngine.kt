@@ -17,8 +17,54 @@ import kotlin.math.max
 object KickBassEngine {
 
     /**
+     * Menerapkan sidechain ducking langsung ke blok PCM bass (misal 16384 frames)
+     * tanpa alokasi memori heap (anti OOM).
+     */
+    fun applySidechainDuckingBlock(
+        bassBlock: FloatArray,
+        startFrame: Long,
+        frameCount: Int,
+        drumEvents: List<DrumEvent>,
+        sampleRate: Int,
+        channels: Int = 2,
+        duckingDepth: Float = 0.65f,
+        releaseTimeMs: Float = 140f,
+        offset: Int = 0
+    ) {
+        val releaseSamples = ((releaseTimeMs / 1000f) * sampleRate).toInt().coerceAtLeast(1)
+        val endFrame = startFrame + frameCount
+
+        for (kick in drumEvents) {
+            if (kick.soundType != DrumSoundType.KICK) continue
+            val kickStart = kick.sampleOffset
+            val kickEnd = kickStart + releaseSamples
+            if (kickEnd <= startFrame || kickStart >= endFrame) continue
+
+            val vel = kick.velocity.coerceIn(0.2f, 1.0f)
+            val effectiveDepth = duckingDepth * vel
+
+            val overlapStart = maxOf(startFrame, kickStart)
+            val overlapEnd = minOf(endFrame, kickEnd)
+
+            for (f in overlapStart until overlapEnd) {
+                val i = (f - kickStart).toInt()
+                val t = i.toDouble() / releaseSamples
+                val recovery = 1.0 - exp(-t * 4.0)
+                val gain = (1.0f - effectiveDepth * (1.0f - recovery.toFloat())).coerceIn(0.1f, 1.0f)
+
+                val outIdx = offset + ((f - startFrame) * channels).toInt()
+                if (outIdx + 1 < bassBlock.size) {
+                    bassBlock[outIdx] *= gain
+                    bassBlock[outIdx + 1] *= gain
+                }
+            }
+        }
+    }
+
+    /**
      * Menerapkan ducking sidechain pada buffer PCM bass berdasarkan daftar event kick.
      */
+    @Deprecated("Gunakan applySidechainDuckingBlock untuk streaming tanpa OOM")
     fun applySidechainDucking(
         bassPcm: AudioPcmData,
         drumEvents: List<DrumEvent>,

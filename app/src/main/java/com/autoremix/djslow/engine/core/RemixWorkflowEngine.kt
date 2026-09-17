@@ -169,7 +169,7 @@ object RemixWorkflowEngine {
                 melodyEvents = scheduledEvents.melodyEvents,
                 transitionEvents = scheduledEvents.transitionEvents
             )
-            LogChatManager.updatePipeline(PipelineStage.GENERATOR, StepStatus.SUCCESS, "Drum, Bass, Akor, Melodi (Streaming)")
+            LogChatManager.updatePipeline(PipelineStage.GENERATOR, StepStatus.SUCCESS, "GENERATOR: BLOCK STREAMING")
 
             // ==============================================================
             // 7. VOCAL & FX ENGINE
@@ -283,8 +283,8 @@ object RemixWorkflowEngine {
             }
             val finalWavFile = targetFile
 
-            LogChatManager.updatePipeline(PipelineStage.MIX, StepStatus.SUCCESS, "Streaming Mix OK")
-            LogChatManager.updatePipeline(PipelineStage.MASTER, StepStatus.SUCCESS, "Preset ${masterPreset.label}")
+            LogChatManager.updatePipeline(PipelineStage.MIX, StepStatus.SUCCESS, "MIX: BLOCK STREAMING")
+            LogChatManager.updatePipeline(PipelineStage.MASTER, StepStatus.SUCCESS, "MASTER: BLOCK STREAMING")
             onStatusChanged?.invoke(OutputEngine.OutputStatus.RENDERING, 0.90f, "RENDERING SELESAI")
 
             // ==============================================================

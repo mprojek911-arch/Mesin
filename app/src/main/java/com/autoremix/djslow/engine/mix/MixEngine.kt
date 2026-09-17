@@ -42,9 +42,164 @@ object MixEngine {
         val isAutoMixEnabled: Boolean = true
     )
 
+    data class EffectiveGains(
+        val vocalGain: Float,
+        val beatGain: Float,
+        val drumGain: Float,
+        val bassGain: Float,
+        val chordGain: Float,
+        val melodyGain: Float,
+        val padGain: Float,
+        val fxGain: Float,
+        val masterGain: Float
+    )
+
+    /**
+     * Menghitung nilai gain efektif untuk semua track dan bus dengan proteksi Auto Gain Staging.
+     */
+    fun computeEffectiveGains(params: MixParams): EffectiveGains {
+        val isAnySolo = params.vocalSettings.isSolo ||
+                params.beatSettings.isSolo ||
+                params.drumSettings.isSolo ||
+                params.bassSettings.isSolo ||
+                params.chordSettings.isSolo ||
+                params.melodySettings.isSolo ||
+                params.padSettings.isSolo ||
+                params.fxSettings.isSolo
+
+        var vocalGain = params.vocalSettings.computeEffectiveGain(isAnySolo) * params.vocalBusSettings.effectiveGain
+        var beatGain = params.beatSettings.computeEffectiveGain(isAnySolo) * params.beatBusSettings.effectiveGain
+        var drumGain = params.drumSettings.computeEffectiveGain(isAnySolo) * params.drumBusSettings.effectiveGain
+        var bassGain = params.bassSettings.computeEffectiveGain(isAnySolo) * params.bassBusSettings.effectiveGain
+
+        val musicBusMultiplier = params.musicBusSettings.effectiveGain
+        var chordGain = params.chordSettings.computeEffectiveGain(isAnySolo) * musicBusMultiplier
+        var melodyGain = params.melodySettings.computeEffectiveGain(isAnySolo) * musicBusMultiplier
+        var padGain = params.padSettings.computeEffectiveGain(isAnySolo) * musicBusMultiplier
+        var fxGain = params.fxSettings.computeEffectiveGain(isAnySolo) * musicBusMultiplier
+
+        if (params.isAutoMixEnabled) {
+            if (vocalGain > 0.0f) {
+                val totalMusic = chordGain + melodyGain + padGain + fxGain
+                if (totalMusic > 0.0f) {
+                    val maxAllowedMusic = vocalGain * 1.5f
+                    if (totalMusic > maxAllowedMusic) {
+                        val musicScale = maxAllowedMusic / totalMusic
+                        chordGain *= musicScale
+                        melodyGain *= musicScale
+                        padGain *= musicScale
+                        fxGain *= musicScale
+                    }
+                }
+            }
+
+            val totalTrackEnergy = vocalGain + beatGain + drumGain + bassGain + chordGain + melodyGain + padGain + fxGain
+            if (totalTrackEnergy > 3.2f) {
+                val stagingScale = 3.2f / totalTrackEnergy
+                vocalGain *= stagingScale
+                beatGain *= stagingScale
+                drumGain *= stagingScale
+                bassGain *= stagingScale
+                chordGain *= stagingScale
+                melodyGain *= stagingScale
+                padGain *= stagingScale
+                fxGain *= stagingScale
+            }
+        }
+
+        val masterGain = params.masterGain.coerceIn(0.0f, 1.5f)
+        return EffectiveGains(
+            vocalGain = vocalGain,
+            beatGain = beatGain,
+            drumGain = drumGain,
+            bassGain = bassGain,
+            chordGain = chordGain,
+            melodyGain = melodyGain,
+            padGain = padGain,
+            fxGain = fxGain,
+            masterGain = masterGain
+        )
+    }
+
+    /**
+     * Melakukan mixing summing per blok (misal 16384 frames) langsung ke buffer stereo tujuan.
+     * Mengeliminasi alokasi RAM per-song secara menyeluruh (Zero Heap Allocation, anti OOM).
+     */
+    fun mixBlock(
+        vocalBlock: FloatArray? = null,
+        beatBlock: FloatArray? = null,
+        drumBlock: FloatArray? = null,
+        bassBlock: FloatArray? = null,
+        chordBlock: FloatArray? = null,
+        melodyBlock: FloatArray? = null,
+        padBlock: FloatArray? = null,
+        fxBlock: FloatArray? = null,
+        frameCount: Int,
+        gains: EffectiveGains,
+        outMixed: FloatArray,
+        offset: Int = 0
+    ) {
+        val channels = 2
+        for (f in 0 until frameCount) {
+            val iL = f * channels
+            val iR = f * channels + 1
+
+            val vL = if (vocalBlock != null && iL < vocalBlock.size) vocalBlock[iL] else 0.0f
+            val vR = if (vocalBlock != null && iR < vocalBlock.size) vocalBlock[iR] else 0.0f
+
+            val bL = if (beatBlock != null && iL < beatBlock.size) beatBlock[iL] else 0.0f
+            val bR = if (beatBlock != null && iR < beatBlock.size) beatBlock[iR] else 0.0f
+
+            val drL = if (drumBlock != null && iL < drumBlock.size) drumBlock[iL] else 0.0f
+            val drR = if (drumBlock != null && iR < drumBlock.size) drumBlock[iR] else 0.0f
+
+            val bassL = if (bassBlock != null && iL < bassBlock.size) bassBlock[iL] else 0.0f
+            val bassR = if (bassBlock != null && iR < bassBlock.size) bassBlock[iR] else 0.0f
+
+            val cL = if (chordBlock != null && iL < chordBlock.size) chordBlock[iL] else 0.0f
+            val cR = if (chordBlock != null && iR < chordBlock.size) chordBlock[iR] else 0.0f
+
+            val mL = if (melodyBlock != null && iL < melodyBlock.size) melodyBlock[iL] else 0.0f
+            val mR = if (melodyBlock != null && iR < melodyBlock.size) melodyBlock[iR] else 0.0f
+
+            val pL = if (padBlock != null && iL < padBlock.size) padBlock[iL] else 0.0f
+            val pR = if (padBlock != null && iR < padBlock.size) padBlock[iR] else 0.0f
+
+            val tL = if (fxBlock != null && iL < fxBlock.size) fxBlock[iL] else 0.0f
+            val tR = if (fxBlock != null && iR < fxBlock.size) fxBlock[iR] else 0.0f
+
+            // Bus Summing
+            val busVocalL = vL * gains.vocalGain
+            val busVocalR = vR * gains.vocalGain
+
+            val busBeatL = bL * gains.beatGain
+            val busBeatR = bR * gains.beatGain
+
+            val busDrumL = drL * gains.drumGain
+            val busDrumR = drR * gains.drumGain
+
+            val busBassL = bassL * gains.bassGain
+            val busBassR = bassR * gains.bassGain
+
+            val busMusicL = cL * gains.chordGain + mL * gains.melodyGain + pL * gains.padGain + tL * gains.fxGain
+            val busMusicR = cR * gains.chordGain + mR * gains.melodyGain + pR * gains.padGain + tR * gains.fxGain
+
+            val mixedL = (busVocalL + busBeatL + busDrumL + busBassL + busMusicL) * gains.masterGain
+            val mixedR = (busVocalR + busBeatR + busDrumR + busBassR + busMusicR) * gains.masterGain
+
+            val outIdxL = offset + iL
+            val outIdxR = offset + iR
+            if (outIdxR < outMixed.size) {
+                outMixed[outIdxL] = mixedL.coerceIn(-PRE_MASTER_HEADROOM_PEAK, PRE_MASTER_HEADROOM_PEAK)
+                outMixed[outIdxR] = mixedR.coerceIn(-PRE_MASTER_HEADROOM_PEAK, PRE_MASTER_HEADROOM_PEAK)
+            }
+        }
+    }
+
     /**
      * Melakukan mixing antara seluruh layer audio PCM ke stereo Float32 melalui arsitektur Mix Bus.
      */
+    @Deprecated("Gunakan mixBlock() untuk mixing streaming tanpa OOM")
     fun mix(
         vocalPcm: AudioPcmData?,
         beatPcm: AudioPcmData?,

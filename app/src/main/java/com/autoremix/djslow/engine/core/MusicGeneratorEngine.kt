@@ -74,8 +74,14 @@ object MusicGeneratorEngine {
         val fxPcm: AudioPcmData = AudioPcmData.createEmpty(44100, 2),
         val drumEvents: List<DrumEvent> = emptyList(),
         val bassEvents: List<com.autoremix.djslow.engine.timeline.TimelineEvent.BassEvent> = emptyList(),
+        val chordEvents: List<com.autoremix.djslow.engine.timeline.TimelineEvent.ChordEvent> = emptyList(),
         val melodyEvents: List<MelodyEvent> = emptyList(),
-        val transitionEvents: List<TransitionFxEvent> = emptyList()
+        val padEvents: List<com.autoremix.djslow.engine.pad.PadEvent> = emptyList(),
+        val transitionEvents: List<TransitionFxEvent> = emptyList(),
+        val chordVoices: List<ChordSynthEngine.ChordVoiceState> = emptyList(),
+        val timeline: MasterTimeline? = null,
+        val arrangement: ArrangementEngine.FullArrangement? = null,
+        val remixPlan: RemixBrain.RemixPlan? = null
     )
 
     /**
@@ -342,7 +348,9 @@ object MusicGeneratorEngine {
     }
 
     /**
-     * Menghasilkan seluruh instrumen musik secara serempak di Master Clock.
+     * Menghasilkan jadwal seluruh event instrumen musik secara serempak di Master Clock.
+     * Sesuai arsitektur FASE 2 & FASE 3, fungsi ini HANYA menghasilkan EVENTS, TIMELINE,
+     * ARRANGEMENT, PARAMETER, SEED, dan METADATA — BUKAN FULL PCM — untuk mencegah OOM.
      */
     suspend fun generateMusic(
         timeline: MasterTimeline,
@@ -351,148 +359,32 @@ object MusicGeneratorEngine {
         onProgress: ((Float, String) -> Unit)? = null
     ): Result<GeneratedMusic> = withContext(Dispatchers.Default) {
         try {
-            val sampleRate = timeline.sampleRate
-            val totalFrames = timeline.totalFrames.toInt()
-            val sections = arrangement.sections.map { it.toSongSection() }
-
-            // 1. Kurva Energi
-            val energyCurve = EnergyCurve(sections, timeline.totalFrames)
-
-            // 2. Generate DRUM (Patuhi aturan section & style)
-            onProgress?.invoke(0.15f, "Menyintesis track Drum (Kick punchy, Snare, Hihat swing)...")
-            val beatAnalysis = com.autoremix.djslow.engine.analysis.BeatContentAnalyzer.BeatContentAnalysis(
-                drumPresence = 0f,
-                bassPresence = 0f,
-                spectralDensity = 0f,
-                isBeatEmptyOrSilent = true,
-                recommendedDrumMode = com.autoremix.djslow.engine.analysis.GeneratedDrumMode.HIGH,
-                explanation = "Synthesizer drum diaktifkan penuh"
-            )
-            val scheduledDrumEvents = DrumEngine.scheduleDrumEvents(
-                sections = sections,
-                energyCurve = energyCurve,
-                bpm = remixPlan.targetBpm,
-                sampleRate = sampleRate,
-                totalBars = timeline.totalBars,
-                beatAnalysis = beatAnalysis,
-                preset = remixPlan.style.legacyPreset
-            )
-            val drumPcm = DrumEngine.renderDrums(
-                events = scheduledDrumEvents,
-                totalSamples = timeline.totalFrames,
-                sampleRate = sampleRate
-            )
-
-            // 3. Generate BASS (Sub-bass, glide, ducking)
-            onProgress?.invoke(0.35f, "Menyintesis track Sub-Bass & 808 Glide...")
-            val rawBassEvents = BassEngine.generateBassEvents(
-                timeline = timeline,
-                key = remixPlan.targetKey,
-                patternType = remixPlan.bassPlan.patternType
-            )
-            // BAGIAN D Section Behavior:
-            // DROP: full bass
-            // BREAK: light bass (reduced velocity)
-            // BUILD: controlled bass (steady)
-            // PRE-DROP: reduced low end (mute bass to build drop tension)
-            val filteredBassEvents = rawBassEvents.mapNotNull { bassEvent ->
-                val sec = arrangement.getSectionForBar(bassEvent.barIndex)
-                when {
-                    sec == null || sec.bassMode == ArrangementEngine.BassMode.OFF || sec.sectionType == SongSectionType.PRE_DROP -> null
-                    sec.sectionType in listOf(SongSectionType.BREAK, SongSectionType.BREAKDOWN) -> {
-                        bassEvent.copy(velocity = (bassEvent.velocity * 0.55f).coerceIn(0.1f, 1.0f))
-                    }
-                    sec.sectionType in listOf(SongSectionType.BUILD_UP, SongSectionType.BUILD_UP_2, SongSectionType.FINAL_BUILD) -> {
-                        bassEvent.copy(velocity = (bassEvent.velocity * 0.70f).coerceIn(0.1f, 1.0f))
-                    }
-                    else -> bassEvent
-                }
-            }
-            val bassPcm = BassEngine.renderBassPcm(
-                timeline = timeline,
-                bassEvents = filteredBassEvents,
-                volume = remixPlan.bassPlan.bassVolume
-            )
-
-            // 4. Generate CHORD SYNTH (Polyphonic progression)
-            onProgress?.invoke(0.55f, "Menyintesis progresi akor harmonik...")
-            val chordPcm = ChordSynthEngine.renderProgressionPcm(
-                timeline = timeline,
-                preset = remixPlan.chordPlan.preset,
-                volume = remixPlan.chordPlan.volume,
-                arrangement = arrangement
-            )
-
-            // 5. Generate MELODY HOOK (Procedural dari seed)
-            onProgress?.invoke(0.70f, "Menyusun melodi hook DJ Slow berkarakter...")
-            val melodyEvents = MelodyEngine.scheduleMelodyEvents(
-                key = remixPlan.targetKey,
-                chords = remixPlan.chordPlan.progression,
-                bpm = remixPlan.targetBpm,
-                sampleRate = sampleRate,
-                totalBars = timeline.totalBars,
-                sections = sections,
-                energyCurve = energyCurve,
-                seed = remixPlan.melodyPlan.seed,
-                preset = remixPlan.style.legacyPreset
-            )
-            val melodyPcm = MelodyEngine.renderMelody(
-                events = melodyEvents,
-                totalSamples = timeline.totalFrames,
-                sampleRate = sampleRate
-            )
-
-            // 6. Generate PAD ATMOSFIR
-            onProgress?.invoke(0.85f, "Membangun pad atmosferik latar belakang...")
-            val padEvents = PadEngine.schedulePadEvents(
-                key = remixPlan.targetKey,
-                chords = remixPlan.chordPlan.progression,
-                bpm = remixPlan.targetBpm,
-                sampleRate = sampleRate,
-                totalBars = timeline.totalBars,
-                sections = sections,
-                energyCurve = energyCurve,
-                preset = remixPlan.style.legacyPreset,
-                hasVocal = false
-            )
-            val padPcm = PadEngine.renderPad(
-                events = padEvents,
-                totalSamples = timeline.totalFrames,
-                sampleRate = sampleRate
-            )
-
-            // 7. Generate FX TRANSISI (Risers, Impacts, Sweeps)
-            onProgress?.invoke(0.95f, "Menyintesis FX transisi, risers, dan impact...")
-            val samplesPerBar = (sampleRate * 60f / remixPlan.targetBpm * 4f).toLong()
-            val fxEvents = SectionEngines.scheduleTransitionEvents(
-                sections = sections,
-                sampleRate = sampleRate,
-                samplesPerBar = samplesPerBar
-            )
-            val fxPcm = SectionEngines.renderTransitions(
-                events = fxEvents,
-                totalSamples = timeline.totalFrames,
-                sampleRate = sampleRate
-            )
-
-            onProgress?.invoke(1.0f, "Sintesis seluruh instrumen musik selesai.")
+            onProgress?.invoke(0.20f, "Menyusun jadwal event instrumen (Streaming Architecture)...")
+            val scheduled = scheduleAllEvents(timeline, remixPlan, arrangement)
+            onProgress?.invoke(1.0f, "Jadwal event instrumen siap untuk streaming render.")
 
             val generated = GeneratedMusic(
-                drumPcm = drumPcm,
-                bassPcm = bassPcm,
-                chordPcm = chordPcm,
-                melodyPcm = melodyPcm,
-                padPcm = padPcm,
-                fxPcm = fxPcm,
-                drumEvents = scheduledDrumEvents,
-                bassEvents = filteredBassEvents,
-                melodyEvents = melodyEvents,
-                transitionEvents = fxEvents
+                drumPcm = AudioPcmData.createEmpty(timeline.sampleRate, 2),
+                bassPcm = AudioPcmData.createEmpty(timeline.sampleRate, 2),
+                chordPcm = AudioPcmData.createEmpty(timeline.sampleRate, 2),
+                melodyPcm = AudioPcmData.createEmpty(timeline.sampleRate, 2),
+                padPcm = AudioPcmData.createEmpty(timeline.sampleRate, 2),
+                fxPcm = AudioPcmData.createEmpty(timeline.sampleRate, 2),
+                drumEvents = scheduled.drumEvents,
+                bassEvents = scheduled.bassEvents,
+                chordEvents = timeline.chordEvents,
+                melodyEvents = scheduled.melodyEvents,
+                padEvents = scheduled.padEvents,
+                transitionEvents = scheduled.transitionEvents,
+                chordVoices = scheduled.chordVoices,
+                timeline = timeline,
+                arrangement = arrangement,
+                remixPlan = remixPlan
             )
 
             Result.success(generated)
         } catch (e: Exception) {
-            Result.failure(IllegalStateException("Gagal membuat musik sintetis: ${e.localizedMessage ?: e.message}"))
+            Result.failure(IllegalStateException("Gagal membuat jadwal musik: ${e.localizedMessage ?: e.message}"))
         }
     }
 }

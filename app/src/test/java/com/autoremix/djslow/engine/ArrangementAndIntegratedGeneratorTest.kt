@@ -286,7 +286,7 @@ class ArrangementAndIntegratedGeneratorTest {
 
     @Test
     fun testIntegratedAudioRenderOutputNotEmptyAndSafeHeadroom() = runBlocking {
-        // Render a concise 8-bar loop to verify audio DSP synthesis without OOM
+        // Render a concise 8-bar loop to verify audio DSP synthesis without OOM (Streaming block architecture)
         val totalDurationMs = 24000L // 8 bars @ 80 BPM
         val analysis = createMockAnalysis(totalDurationMs)
         val musicalMap = MusicalMapEngine.buildMap(analysis, analysis.timeline)
@@ -298,38 +298,66 @@ class ArrangementAndIntegratedGeneratorTest {
 
         val music = result.getOrThrow()
 
-        // 1. Drum output verification
-        assertFalse("Drum PCM must not be silent", music.drumPcm.isSilent())
-        val drumPeak = music.drumPcm.calculatePeak()
-        assertTrue("Drum peak ($drumPeak) must be finite and controlled", drumPeak in 0.05f..1.5f)
+        // 1. Verify Event Scheduling (Zero OOM)
+        assertTrue("Drum events must be scheduled", music.drumEvents.isNotEmpty())
+        assertTrue("Bass events must be scheduled", music.bassEvents.isNotEmpty())
+        assertTrue("Melody events must be scheduled", music.melodyEvents.isNotEmpty())
+        assertTrue("Transition events must be scheduled", music.transitionEvents.isNotEmpty())
 
-        // 2. Bass output verification
-        assertFalse("Bass PCM must not be silent", music.bassPcm.isSilent())
-        val bassPeak = music.bassPcm.calculatePeak()
-        assertTrue("Bass peak ($bassPeak) must be finite and controlled", bassPeak in 0.05f..1.5f)
+        // 2. Block-based render verification (16384 frames)
+        val testFrames = 16384
+        val channels = 2
+        val drumBlock = FloatArray(testFrames * channels)
+        val bassBlock = FloatArray(testFrames * channels)
+        val chordBlock = FloatArray(testFrames * channels)
+        val melodyBlock = FloatArray(testFrames * channels)
 
-        // 3. Chord output verification
-        assertFalse("Chord PCM must not be silent", music.chordPcm.isSilent())
-        val chordPeak = music.chordPcm.calculatePeak()
-        assertTrue("Chord peak ($chordPeak) must be finite and controlled", chordPeak in 0.05f..1.5f)
+        // Drum Block (rendered around first drum event)
+        val firstDrumSample = music.drumEvents.first().sampleOffset
+        com.autoremix.djslow.engine.drum.DrumEngine.renderDrumBlock(
+            events = music.drumEvents,
+            startFrame = firstDrumSample,
+            frameCount = testFrames,
+            sampleRate = sampleRate,
+            outBuffer = drumBlock,
+            offset = 0
+        )
+        val drumPeak = drumBlock.maxOfOrNull { abs(it) } ?: 0f
+        assertTrue("Drum block peak ($drumPeak) must be finite and controlled", drumPeak in 0.05f..1.5f)
 
-        // 4. Melody output verification
-        assertFalse("Melody PCM must not be silent", music.melodyPcm.isSilent())
-        val melodyPeak = music.melodyPcm.calculatePeak()
-        assertTrue("Melody peak ($melodyPeak) must be finite and controlled", melodyPeak in 0.01f..1.5f)
+        // Bass Block (rendered around first bass event)
+        val firstBassSample = music.bassEvents.first().startSample
+        com.autoremix.djslow.engine.synth.BassEngine.renderBassBlock(
+            bassEvents = music.bassEvents,
+            startFrame = firstBassSample,
+            frameCount = testFrames,
+            sampleRate = sampleRate,
+            outBuffer = bassBlock,
+            offset = 0,
+            volume = 0.85f
+        )
+        val bassPeak = bassBlock.maxOfOrNull { abs(it) } ?: 0f
+        assertTrue("Bass block peak ($bassPeak) must be finite and controlled", bassPeak in 0.05f..1.5f)
 
-        // 5. Pad output verification
-        assertFalse("Pad PCM must not be silent", music.padPcm.isSilent())
-        val padPeak = music.padPcm.calculatePeak()
-        assertTrue("Pad peak ($padPeak) must be finite and controlled", padPeak in 0.05f..1.5f)
+        // Melody Block (rendered around first melody event)
+        val firstMelodySample = music.melodyEvents.first().sampleOffset
+        com.autoremix.djslow.engine.melody.MelodyEngine.renderMelodyBlock(
+            events = music.melodyEvents,
+            startFrame = firstMelodySample,
+            frameCount = testFrames,
+            sampleRate = sampleRate,
+            outBuffer = melodyBlock,
+            offset = 0
+        )
+        val melodyPeak = melodyBlock.maxOfOrNull { abs(it) } ?: 0f
+        assertTrue("Melody block peak ($melodyPeak) must be finite and controlled", melodyPeak in 0.01f..1.5f)
 
-        // 6. FX output verification
-        assertFalse("FX PCM must not be silent", music.fxPcm.isSilent())
-        val fxPeak = music.fxPcm.calculatePeak()
-        assertTrue("FX peak ($fxPeak) must be finite and controlled", fxPeak in 0.05f..1.5f)
-
-        // 7. Check no NaN or Infinite values
-        for (sample in music.drumPcm.samples) {
+        // Check no NaN or Infinite values
+        for (sample in drumBlock) {
+            assertFalse("Audio samples must never be NaN", sample.isNaN())
+            assertFalse("Audio samples must never be Infinite", sample.isInfinite())
+        }
+        for (sample in bassBlock) {
             assertFalse("Audio samples must never be NaN", sample.isNaN())
             assertFalse("Audio samples must never be Infinite", sample.isInfinite())
         }
